@@ -25,24 +25,35 @@ export class OpenAIProvider extends AIProvider {
     }
   }
 
+  private isNewGenerationModel(model?: string): boolean {
+    const targetModel = model || this.model;
+    return targetModel.includes('gpt-5') || targetModel.includes('gpt-4o');
+  }
+
+  private buildCompletionParams(options: CompletionOptions, stream: false): OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming;
+  private buildCompletionParams(options: CompletionOptions, stream: true): OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming;
+  private buildCompletionParams(options: CompletionOptions, stream: boolean): OpenAI.Chat.Completions.ChatCompletionCreateParams {
+    const model = options.model || this.model;
+    const isNewGen = this.isNewGenerationModel(model);
+    
+    return {
+      model,
+      messages: options.messages || [],
+      temperature: model.includes('gpt-5') ? undefined : options.temperature,
+      max_tokens: isNewGen ? undefined : options.maxTokens,
+      max_completion_tokens: isNewGen ? options.maxTokens : undefined,
+      stream,
+      stop: options.stopSequences,
+      top_p: options.topP,
+      frequency_penalty: options.frequencyPenalty,
+      presence_penalty: options.presencePenalty,
+    } as any;
+  }
+
   async complete(options: CompletionOptions): Promise<CompletionResponse> {
     try {
-      const completion = await this.client.chat.completions.create({
-        model: options.model || this.model,
-        messages: options.messages || [],
-        temperature: this.model.includes('gpt-5') ? undefined : options.temperature,
-        max_tokens: this.model.includes('gpt-5') || this.model.includes('gpt-4o') 
-          ? undefined 
-          : options.maxTokens,
-        max_completion_tokens: this.model.includes('gpt-5') || this.model.includes('gpt-4o')
-          ? options.maxTokens
-          : undefined,
-        stream: false,
-        stop: options.stopSequences,
-        top_p: options.topP,
-        frequency_penalty: options.frequencyPenalty,
-        presence_penalty: options.presencePenalty,
-      });
+      const params = this.buildCompletionParams(options, false);
+      const completion = await this.client.chat.completions.create(params);
 
       if (!completion.choices || completion.choices.length === 0) {
         throw new Error('No response from API');
@@ -71,22 +82,8 @@ export class OpenAIProvider extends AIProvider {
 
   async *streamComplete(options: CompletionOptions): AsyncGenerator<StreamChunk, void, unknown> {
     try {
-      const stream = await this.client.chat.completions.create({
-        model: options.model || this.model,
-        messages: options.messages || [],
-        temperature: this.model.includes('gpt-5') ? undefined : options.temperature,
-        max_tokens: this.model.includes('gpt-5') || this.model.includes('gpt-4o') 
-          ? undefined 
-          : options.maxTokens,
-        max_completion_tokens: this.model.includes('gpt-5') || this.model.includes('gpt-4o')
-          ? options.maxTokens
-          : undefined,
-        stream: true,
-        stop: options.stopSequences,
-        top_p: options.topP,
-        frequency_penalty: options.frequencyPenalty,
-        presence_penalty: options.presencePenalty,
-      });
+      const params = this.buildCompletionParams(options, true);
+      const stream = await this.client.chat.completions.create(params);
 
       for await (const chunk of stream) {
         const content = chunk.choices[0]?.delta?.content || '';
