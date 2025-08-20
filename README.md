@@ -6,7 +6,7 @@
 
 [![npm version](https://img.shields.io/npm/v/nippon-code.svg)](https://www.npmjs.com/package/nippon-code)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-
+あ
 ## ⚠️ 開発状況
 
 **このプロジェクトは現在開発初期段階です。**
