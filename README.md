@@ -21,25 +21,39 @@ NipponCodeは、日本語での対話に最適化されたシンプルなAIチ�
 
 - 💬 **AIとの対話** - OpenAI/AnthropicのAPIを使用したテキストチャット
 - 🎌 **日本語対応** - 日本語での自然な会話
-- ⚙️ **API設定** - APIキーとモデルの設定
+- ⚙️ **API設定** - 複数プロバイダーとモデルの設定
+- 📁 **基本的な分析** - プロジェクト構造の表示（実験的）
+- 🔄 **セッション管理** - 会話の保存と再開
 
-### まだできないこと（開発予定）
+### 制限事項（今後改善予定）
 
-- ❌ コード生成・編集機能
-- ❌ プロジェクト分析
-- ❌ ファイル操作
-- ❌ リファクタリング支援
-- ❌ コンテキスト管理
+- ⚠️ コード生成・編集はチャット応答のみ（ファイル編集不可）
+- ⚠️ プロジェクト分析は基本的な構造表示のみ
+- ⚠️ ファイルの直接操作は未対応
+- ⚠️ リファクタリング自動化は未実装
+- ⚠️ 高度なコンテキスト管理は開発中
 
 ## インストール
 
 ### 前提条件
 
-- Node.js 14以上
+- Node.js 18以上
 - OpenAIまたはAnthropicのAPIキー
 
-### セットアップ
+### npxで直接実行（推奨）
+```bash
+npx nipponcode init
+npx nipponcode chat
+```
 
+### グローバルインストール
+```bash
+npm install -g nipponcode
+nipponcode init  # または ncode init
+nipponcode chat  # または ncode chat
+```
+
+### ローカル開発
 ```bash
 # リポジトリをクローン
 git clone https://github.com/nipponcode/nipponcode.git
@@ -51,7 +65,7 @@ npm install
 # ビルド
 npm run build
 
-# グローバルにリンク（オプション）
+# グローバルにリンク
 npm link
 ```
 
@@ -60,36 +74,53 @@ npm link
 ### 1. 初期設定
 
 ```bash
-# 環境変数ファイルを作成
+nipponcode init  # または ncode init
+```
+
+設定ウィザードが起動し、以下を設定できます：
+- APIキー（OpenAI、Anthropic、カスタム）
+- APIベースURL（カスタムエンドポイント対応）
+- 使用モデル（gpt-4、claude-3、gpt-oss等）
+- 使用言語（日本語/英語）
+
+環境変数での設定も可能：
+```bash
+# .envファイルを作成
 cp env.example .env
 
-# .envファイルを編集してAPIキーを設定
-# OPENAI_API_KEY=your-api-key-here
+# APIキーを設定
+OPENAI_API_KEY=your-api-key-here
 # または
-# ANTHROPIC_API_KEY=your-api-key-here
+ANTHROPIC_API_KEY=your-api-key-here
 ```
 
 ### 2. チャットを開始
 
 ```bash
-# TypeScriptで直接実行
-npm run dev
+nipponcode chat  # または ncode chat
+nipponcode c     # ショートエイリアス
 
-# または、ビルド後に実行
-npm run build
-node dist/cli.js chat
+# オプション付き実行
+nipponcode chat -m "こんにちは"  # 単発メッセージ
+nipponcode chat -f file.txt       # ファイルコンテキスト付き
+nipponcode chat --session dev     # セッション名指定
+nipponcode chat --resume           # 前回のセッション再開
 ```
 
-### 3. 対話する
+### 3. プロジェクト分析（実験的機能）
 
+```bash
+nipponcode analyze           # 現在のディレクトリを分析
+nipponcode analyze src/      # 特定のパスを分析
+nipponcode a --structure     # プロジェクト構造を表示
 ```
-🌸 NipponCode v0.1.0
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-> こんにちは！
-NipponCode: こんにちは！何かお手伝いできることはありますか？
+### 4. 設定管理
 
-> exitと入力すると終了します
+```bash
+nipponcode config --list              # 設定を表示
+nipponcode config --set model=gpt-4   # モデルを変更
+nipponcode config --get model         # 現在のモデルを確認
 ```
 
 ## 設定ファイル
