@@ -25,29 +25,37 @@ export class OpenAIProvider extends AIProvider {
     }
   }
 
-  private isNewGenerationModel(model?: string): boolean {
-    const targetModel = model || this.model;
-    return targetModel.includes('gpt-5') || targetModel.includes('gpt-4o');
-  }
-
-  private buildCompletionParams(options: CompletionOptions, stream: false): OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming;
-  private buildCompletionParams(options: CompletionOptions, stream: true): OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming;
-  private buildCompletionParams(options: CompletionOptions, stream: boolean): OpenAI.Chat.Completions.ChatCompletionCreateParams {
+  private buildCompletionParams(
+    options: CompletionOptions,
+    stream: false
+  ): OpenAI.Chat.ChatCompletionCreateParamsNonStreaming;
+  private buildCompletionParams(
+    options: CompletionOptions,
+    stream: true
+  ): OpenAI.Chat.ChatCompletionCreateParamsStreaming;
+  private buildCompletionParams(
+    options: CompletionOptions,
+    stream: boolean
+  ): OpenAI.Chat.ChatCompletionCreateParams {
     const model = options.model || this.model;
-    const isNewGen = this.isNewGenerationModel(model);
     
-    return {
+    if (!options.messages || options.messages.length === 0) {
+      throw new Error('messages are required for chat.completions.create');
+    }
+    
+    const params: OpenAI.Chat.ChatCompletionCreateParams = {
       model,
-      messages: options.messages || [],
-      temperature: model.includes('gpt-5') ? undefined : options.temperature,
-      max_tokens: isNewGen ? undefined : options.maxTokens,
-      max_completion_tokens: isNewGen ? options.maxTokens : undefined,
+      messages: options.messages,
+      temperature: options.temperature,
+      max_tokens: options.maxTokens,
       stream,
       stop: options.stopSequences,
       top_p: options.topP,
       frequency_penalty: options.frequencyPenalty,
       presence_penalty: options.presencePenalty,
-    } as any;
+    };
+
+    return params as any; // TypeScriptのオーバーロード制約のため必要
   }
 
   async complete(options: CompletionOptions): Promise<CompletionResponse> {

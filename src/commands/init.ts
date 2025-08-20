@@ -118,7 +118,7 @@ async function promptConfiguration(options: InitOptions): Promise<any> {
     });
   }
 
-  const answers = await inquirer.prompt(questions as any);
+  const answers = await inquirer.prompt(questions);
 
   // カスタムモデルの場合は追加入力
   if (answers.model === 'custom') {
