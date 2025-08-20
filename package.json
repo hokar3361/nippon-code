@@ -1,0 +1,72 @@
+{
+  "name": "nipponcode",
+  "version": "0.1.0",
+  "description": "日本語に強いAIコーディングアシスタント - Japanese-optimized AI Coding Assistant",
+  "main": "dist/index.js",
+  "bin": {
+    "nipponcode": "./dist/cli.js",
+    "ncode": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli.ts",
+    "watch": "tsc --watch",
+    "lint": "eslint src/**/*.ts",
+    "test": "jest",
+    "prepare": "npm run build",
+    "postinstall": "node dist/setup.js || true"
+  },
+  "keywords": [
+    "ai",
+    "coding",
+    "assistant",
+    "cli",
+    "agent",
+    "japanese",
+    "openai",
+    "anthropic",
+    "vllm"
+  ],
+  "author": "NipponCode Team",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.6.2",
+    "chalk": "^5.3.0",
+    "commander": "^11.1.0",
+    "diff": "^5.1.0",
+    "dotenv": "^16.3.1",
+    "fs-extra": "^11.2.0",
+    "glob": "^10.3.10",
+    "ignore": "^5.3.0",
+    "inquirer": "^9.2.12",
+    "marked": "^11.0.0",
+    "marked-terminal": "^6.2.0",
+    "ora": "^8.0.1",
+    "p-limit": "^5.0.0",
+    "tiktoken": "^1.0.11",
+    "uuid": "^9.0.1",
+    "yaml": "^2.3.4"
+  },
+  "devDependencies": {
+    "@types/diff": "^5.0.8",
+    "@types/fs-extra": "^11.0.4",
+    "@types/inquirer": "^9.0.7",
+    "@types/marked-terminal": "^6.1.1",
+    "@types/node": "^20.10.4",
+    "@types/uuid": "^9.0.7",
+    "@typescript-eslint/eslint-plugin": "^6.13.2",
+    "@typescript-eslint/parser": "^6.13.2",
+    "eslint": "^8.55.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.1",
+    "tsx": "^4.6.2",
+    "typescript": "^5.9.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nipponcode/nipponcode"
+  }
+}

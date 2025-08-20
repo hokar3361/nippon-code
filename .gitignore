@@ -1,0 +1,59 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Test coverage
+coverage/
+*.lcov
+.nyc_output
+
+# Cache
+.cache/
+.parcel-cache/
+.next/
+.nuxt/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# VLLMCode specific
+.vllmcode/
+sessions/
+*.session.json
+
+
+# NipponCode
+.nipponcode/
+*.session.json
