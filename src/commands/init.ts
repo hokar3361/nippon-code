@@ -63,7 +63,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
 }
 
 async function promptConfiguration(options: InitOptions): Promise<any> {
-  const questions = [];
+  const questions: any[] = [];
 
   // APIキー
   if (!options.apiKey) {
@@ -118,7 +118,7 @@ async function promptConfiguration(options: InitOptions): Promise<any> {
     });
   }
 
-  const answers = await inquirer.prompt(questions);
+  const answers = await inquirer.prompt(questions as any);
 
   // カスタムモデルの場合は追加入力
   if (answers.model === 'custom') {

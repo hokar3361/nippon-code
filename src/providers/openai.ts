@@ -1,62 +1,19 @@
-import axios, { AxiosInstance } from 'axios';
+import OpenAI from 'openai';
 import { AIProvider, CompletionOptions, CompletionResponse, StreamChunk } from './base';
 import { Tiktoken, encoding_for_model } from 'tiktoken';
 
-interface OpenAIMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
-}
-
-interface OpenAICompletionRequest {
-  model: string;
-  messages?: OpenAIMessage[];  // 旧API用
-  input?: any;  // 新API用（文字列または配列）
-  tools?: any[];  // ツール（web_search_preview等）
-  temperature?: number;
-  max_tokens?: number;
-  max_completion_tokens?: number;
-  stream?: boolean;
-  stop?: string[];
-  top_p?: number;
-  frequency_penalty?: number;
-  presence_penalty?: number;
-}
-
-interface OpenAICompletionResponse {
-  id: string;
-  object: string;
-  created: number;
-  model: string;
-  output_text?: string;  // 新API用
-  choices?: Array<{  // 旧API用
-    index: number;
-    message: {
-      role: string;
-      content: string;
-    };
-    finish_reason: string;
-  }>;
-  usage?: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-  };
-}
-
 export class OpenAIProvider extends AIProvider {
-  private client: AxiosInstance;
+  private client: OpenAI;
   private encoder: Tiktoken | null = null;
 
   constructor(apiKey: string, baseUrl: string = 'https://api.openai.com/v1', model: string = 'gpt-4-turbo-preview') {
     super(apiKey, baseUrl, model);
     
-    this.client = axios.create({
+    this.client = new OpenAI({
+      apiKey: this.apiKey,
       baseURL: this.baseUrl,
-      headers: {
-        'Authorization': `Bearer ${this.apiKey}`,
-        'Content-Type': 'application/json',
-      },
       timeout: 120000, // 2分のタイムアウト
+      maxRetries: 2, // 自動リトライ2回
     });
 
     // エンコーダーの初期化
@@ -69,122 +26,86 @@ export class OpenAIProvider extends AIProvider {
   }
 
   async complete(options: CompletionOptions): Promise<CompletionResponse> {
-    const endpoint = '/chat/completions';
-    
-    // GPT-5も一旦通常のchat/completionsエンドポイントを使用
-    const request: OpenAICompletionRequest = {
-      model: options.model || this.model,
-      messages: options.messages,
-      temperature: this.model.includes('gpt-5') ? undefined : options.temperature,  // GPT-5ではtemperatureを送らない
-      stream: false,
-      stop: options.stopSequences,
-      top_p: options.topP,
-      frequency_penalty: options.frequencyPenalty,
-      presence_penalty: options.presencePenalty,
-    };
-    
-    // GPT-4o/GPT-5ではmax_completion_tokensを使用
-    if (this.model.includes('gpt-5') || this.model.includes('gpt-4o')) {
-      request.max_completion_tokens = options.maxTokens;
-    } else {
-      request.max_tokens = options.maxTokens;
-    }
-
     try {
-      const response = await this.client.post<OpenAICompletionResponse>(endpoint, request);
-      const data = response.data;
+      const completion = await this.client.chat.completions.create({
+        model: options.model || this.model,
+        messages: options.messages || [],
+        temperature: this.model.includes('gpt-5') ? undefined : options.temperature,
+        max_tokens: this.model.includes('gpt-5') || this.model.includes('gpt-4o') 
+          ? undefined 
+          : options.maxTokens,
+        max_completion_tokens: this.model.includes('gpt-5') || this.model.includes('gpt-4o')
+          ? options.maxTokens
+          : undefined,
+        stream: false,
+        stop: options.stopSequences,
+        top_p: options.topP,
+        frequency_penalty: options.frequencyPenalty,
+        presence_penalty: options.presencePenalty,
+      });
 
-      // レスポンス処理
-      if (!data.choices || data.choices.length === 0) {
+      if (!completion.choices || completion.choices.length === 0) {
         throw new Error('No response from API');
       }
-      const content = data.choices[0].message.content;
-      const finishReason = data.choices[0].finish_reason;
+
+      const content = completion.choices[0].message.content || '';
+      const finishReason = completion.choices[0].finish_reason;
       
       return {
         content,
-        usage: data.usage ? {
-          promptTokens: data.usage.prompt_tokens,
-          completionTokens: data.usage.completion_tokens,
-          totalTokens: data.usage.total_tokens,
+        usage: completion.usage ? {
+          promptTokens: completion.usage.prompt_tokens,
+          completionTokens: completion.usage.completion_tokens,
+          totalTokens: completion.usage.total_tokens,
         } : undefined,
-        model: data.model,
+        model: completion.model,
         finishReason,
       };
     } catch (error: any) {
-      if (error.response) {
-        throw new Error(`API Error (${error.response.status}): ${error.response.data?.error?.message || error.message}`);
+      if (error instanceof OpenAI.APIError) {
+        throw new Error(`API Error (${error.status}): ${error.message}`);
       }
-      throw new Error(`Network Error: ${error.message}`);
+      throw new Error(`Error: ${error.message}`);
     }
   }
 
   async *streamComplete(options: CompletionOptions): AsyncGenerator<StreamChunk, void, unknown> {
-    const endpoint = '/chat/completions';  // 一旦旧APIを使用
-    
-    // GPT-5も一旦通常のchat/completionsエンドポイントを使用
-    const request: OpenAICompletionRequest = {
-      model: options.model || this.model,
-      messages: options.messages,
-      temperature: this.model.includes('gpt-5') ? undefined : options.temperature,  // GPT-5ではtemperatureを送らない
-      stream: true,
-      stop: options.stopSequences,
-      top_p: options.topP,
-      frequency_penalty: options.frequencyPenalty,
-      presence_penalty: options.presencePenalty,
-    };
-    
-    // GPT-4o/GPT-5ではmax_completion_tokensを使用
-    if (this.model.includes('gpt-5') || this.model.includes('gpt-4o')) {
-      request.max_completion_tokens = options.maxTokens;
-    } else {
-      request.max_tokens = options.maxTokens;
-    }
-
     try {
-      const response = await this.client.post(endpoint, request, {
-        responseType: 'stream',
+      const stream = await this.client.chat.completions.create({
+        model: options.model || this.model,
+        messages: options.messages || [],
+        temperature: this.model.includes('gpt-5') ? undefined : options.temperature,
+        max_tokens: this.model.includes('gpt-5') || this.model.includes('gpt-4o') 
+          ? undefined 
+          : options.maxTokens,
+        max_completion_tokens: this.model.includes('gpt-5') || this.model.includes('gpt-4o')
+          ? options.maxTokens
+          : undefined,
+        stream: true,
+        stop: options.stopSequences,
+        top_p: options.topP,
+        frequency_penalty: options.frequencyPenalty,
+        presence_penalty: options.presencePenalty,
       });
 
-      let buffer = '';
-      
-      for await (const chunk of response.data) {
-        buffer += chunk.toString();
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.trim() === '') continue;
-          if (line.trim() === 'data: [DONE]') {
-            yield { content: '', done: true };
-            return;
-          }
-
-          if (line.startsWith('data: ')) {
-            try {
-              const json = JSON.parse(line.slice(6));
-              const content = json.choices?.[0]?.delta?.content || '';
-              const finishReason = json.choices?.[0]?.finish_reason;
-              
-              if (content) {
-                yield { content, done: false };
-              }
-              
-              if (finishReason) {
-                yield { content: '', done: true };
-                return;
-              }
-            } catch (e) {
-              console.error('Failed to parse SSE message:', line);
-            }
-          }
+      for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content || '';
+        const finishReason = chunk.choices[0]?.finish_reason;
+        
+        if (content) {
+          yield { content, done: false };
+        }
+        
+        if (finishReason) {
+          yield { content: '', done: true };
+          return;
         }
       }
     } catch (error: any) {
-      if (error.response) {
-        throw new Error(`API Error (${error.response.status}): ${error.response.data?.error?.message || error.message}`);
+      if (error instanceof OpenAI.APIError) {
+        throw new Error(`API Error (${error.status}): ${error.message}`);
       }
-      throw new Error(`Network Error: ${error.message}`);
+      throw new Error(`Error: ${error.message}`);
     }
   }
 
@@ -220,12 +141,12 @@ export class OpenAIProvider extends AIProvider {
 
   async getAvailableModels(): Promise<string[]> {
     try {
-      const response = await this.client.get('/models');
-      const models = response.data.data
+      const models = await this.client.models.list();
+      const gptModels = models.data
         .filter((model: any) => model.id.includes('gpt'))
         .map((model: any) => model.id)
         .sort();
-      return models;
+      return gptModels;
     } catch (error) {
       console.error('Failed to fetch models:', error);
       return [
@@ -242,11 +163,10 @@ export class OpenAIProvider extends AIProvider {
 
   async healthCheck(): Promise<boolean> {
     try {
-      await this.client.get('/models');
+      await this.client.models.list();
       return true;
     } catch {
       return false;
     }
   }
 }
-
