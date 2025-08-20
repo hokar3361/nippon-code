@@ -1,5 +1,7 @@
 # 🌸 NipponCode
 
+![NipponCode Banner](.github/images/nipponcode-banner.png)
+
 日本語に最適化された次世代AIコーディングアシスタント
 
 [![npm version](https://img.shields.io/npm/v/nippon-code.svg)](https://www.npmjs.com/package/nippon-code)
@@ -70,6 +72,7 @@ nipponcode chat
 
 🌸 NipponCode v1.0.0
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 
 > こんにちは！Reactコンポーネントを作成してください
 NipponCode: はい、Reactコンポーネントを作成します...
