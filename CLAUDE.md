@@ -180,8 +180,9 @@ graph TD
 
 ### 2025-08-21
 - **Issue #2: OpenAI API呼び出し部を公式SDKへ移行** ([PR #3](https://github.com/hokar3361/nippon-code/pull/3))
-  - 初回実装: [c236ac1](https://github.com/hokar3361/nippon-code/commit/c236ac1c900fcf6bb8d0e913532441101c6ad563)
-  - リファクタリング: [208f078](https://github.com/hokar3361/nippon-code/commit/208f078d9e5f0b7d8c7e9c0a8b5f9c0a8b5f9c0a)
+  - 初回実装: [c236ac1](https://github.com/hokar3361/nippon-code/commit/c236ac1)
+  - リファクタリング: [208f078](https://github.com/hokar3361/nippon-code/commit/208f078)
+  - ドキュメント更新: [50f874d](https://github.com/hokar3361/nippon-code/commit/50f874d)
   - 内容: axiosからOpenAI公式SDK (v5.13.1)への移行、自動リトライ機能追加、エラーハンドリング改善
 
 ### 2025-08-20
