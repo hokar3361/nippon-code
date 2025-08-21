@@ -12,10 +12,12 @@ import { TaskManager } from '../planning/task-manager';
 import { TaskExecutor } from '../execution/executor';
 import { ProgressTracker } from '../execution/progress-tracker';
 import { ExecutionFlow } from '../execution/execution-flow';
-import { CommandExecutor } from '../execution/command-executor';
+import { AsyncCommandExecutor } from '../execution/async-command-executor';
 import { TaskPlan, Permission } from '../planning/interfaces';
 import { autonomousAgent } from '../execution/autonomous-agent';
 import { platformDetector } from '../utils/platform-detector';
+import { InputBuffer } from '../utils/input-buffer';
+import { ErrorContextTracker } from '../utils/error-context-tracker';
 
 interface ChatProfile {
   name: string;
@@ -42,12 +44,19 @@ export class InteractiveChat {
   private taskExecutor: TaskExecutor;
   private progressTracker: ProgressTracker;
   private executionFlow: ExecutionFlow | null = null;
-  private commandExecutor: CommandExecutor;
+  private commandExecutor: AsyncCommandExecutor;
   private currentPlan: TaskPlan | null = null;
   private safeMode: boolean = false;
   // @ts-ignore - Used for state tracking in plan operations
   private _planMode: boolean = false;
+  private inputBuffer: InputBuffer;
+  private inputStats = { lineCount: 0, startTime: 0 };
+  private errorTracker: ErrorContextTracker;
+  private lastError: string | null = null;
 
+  private autoSaveInterval: NodeJS.Timeout | null = null;
+  private sessionFilePath: string;
+  
   constructor() {
     this.rl = readline.createInterface({
       input: process.stdin,
@@ -69,10 +78,30 @@ export class InteractiveChat {
     this.taskManager = new TaskManager();
     this.progressTracker = new ProgressTracker();
     this.taskExecutor = new TaskExecutor(this.taskManager);
-    this.commandExecutor = new CommandExecutor();
+    this.commandExecutor = new AsyncCommandExecutor();
+    this.setupCommandExecutorListeners();
+    
+    // 入力バッファの初期化
+    this.inputBuffer = new InputBuffer();
+    this.setupInputBufferListeners();
+    
+    // エラートラッカーの初期化
+    this.errorTracker = new ErrorContextTracker();
+    this.setupErrorTrackerListeners();
     
     // イベントリスナーの設定
     this.setupEventListeners();
+    
+    // セッションファイルパスの設定
+    const sessionDir = path.join(process.cwd(), '.nipponcode', 'sessions');
+    fs.ensureDirSync(sessionDir);
+    this.sessionFilePath = path.join(sessionDir, 'current-session.json');
+    
+    // セッションの復元
+    this.restoreSession();
+    
+    // 自動保存の開始
+    this.startAutoSave();
   }
 
   private createDefaultProfile(): ChatProfile {
@@ -175,6 +204,17 @@ export class InteractiveChat {
     this.rl.on('line', async (input) => {
       if (!this.running) return;
       
+      // 入力統計の更新
+      const now = Date.now();
+      if (this.inputStats.lineCount === 0) {
+        this.inputStats.startTime = now;
+      }
+      this.inputStats.lineCount++;
+      
+      // ペースト検出
+      const timeSpan = now - this.inputStats.startTime;
+      const isPaste = this.inputBuffer.isProbablyPaste(this.inputStats.lineCount, timeSpan);
+      
       // 複数行モードの処理
       if (this.multilineMode) {
         // 終了マーカーのチェック
@@ -206,6 +246,10 @@ export class InteractiveChat {
           this.multilineBuffer = [];
           console.log(chalk.gray('📝 複数行入力モード (終了: ```)。コピペ対応。'));
           this.rl.setPrompt(chalk.gray('... '));
+        } else if (isPaste || this.inputBuffer.getBufferSize() > 0) {
+          // ペーストまたはバッファリング中の入力
+          this.inputBuffer.addInput(input);
+          // バッファがフラッシュされるまで待機
         } else {
           // 通常の処理
           const trimmedInput = input.trim();
@@ -216,6 +260,11 @@ export class InteractiveChat {
             await this.handleMessage(trimmedInput);
           }
         }
+      }
+      
+      // 入力統計のリセット（100ms以上経過した場合）
+      if (timeSpan > 100) {
+        this.inputStats = { lineCount: 0, startTime: 0 };
       }
       
       if (this.running) {
@@ -309,6 +358,16 @@ export class InteractiveChat {
         
       case '/abort':
         this.abortExecution();
+        break;
+        
+      case '/ps':
+      case '/processes':
+        this.showBackgroundProcesses();
+        break;
+        
+      case '/stop':
+      case '/kill':
+        await this.stopBackgroundProcess(args);
         break;
         
       default:
@@ -429,19 +488,43 @@ export class InteractiveChat {
     this.isProcessing = true;
     
     try {
-      // タスク実行リクエストの判定
-      const isTaskRequest = this.isTaskRequest(message);
+      // エラーメッセージの可能性をチェック
+      const isError = this.isErrorMessage(message);
       
-      if (isTaskRequest) {
-        // 自動実行フロー
-        await this.handleAutonomousExecution(message);
+      if (isError && this.lastError === null) {
+        // エラーメッセージとして処理
+        this.lastError = message;
+        await this.handleErrorMessage(message);
+      } else if (this.lastError && isError) {
+        // 連続したエラーメッセージ
+        this.lastError += '\n' + message;
+        await this.handleErrorMessage(this.lastError);
       } else {
-        // 通常のチャット応答
-        await this.handleNormalChat(message);
+        // 通常のメッセージ処理
+        this.lastError = null;
+        
+        // タスク実行リクエストの判定
+        const isTaskRequest = this.isTaskRequest(message);
+        
+        if (isTaskRequest) {
+          // 自動実行フロー
+          await this.handleAutonomousExecution(message);
+        } else {
+          // 通常のチャット応答
+          await this.handleNormalChat(message);
+        }
       }
       
     } catch (error: any) {
       console.error(chalk.red('\n❌ エラー:'), error.message);
+      // エラーコンテキストを記録
+      this.errorTracker.recordContext({
+        timestamp: new Date(),
+        type: 'execution',
+        operation: 'handleMessage',
+        details: { message },
+        error: error
+      });
       console.log();
     } finally {
       this.isProcessing = false;
@@ -549,6 +632,8 @@ export class InteractiveChat {
     console.log(chalk.white('  /rollback       - 直前の変更を取り消し'));
     console.log(chalk.white('  /safe-mode      - セーフモード切替（手動承認）'));
     console.log(chalk.white('  /abort          - 実行を中止'));
+    console.log(chalk.white('  /ps, /processes - バックグラウンドプロセス一覧'));
+    console.log(chalk.white('  /stop <id>      - バックグラウンドプロセスを停止'));
     console.log(chalk.white('  /config         - 現在の設定を表示'));
     console.log(chalk.white('  /save           - セッションを保存'));
     console.log(chalk.cyan('\n🚀 高度な機能:\n'));
@@ -591,15 +676,59 @@ export class InteractiveChat {
     return chalk.gray('╭─') + chalk.cyan('[NipponCode]') + chalk.gray('─╮\n╰─➤ ');
   }
   
-  private exit(): void {
+  private async exit(): Promise<void> {
     this.running = false;
+    
+    // セッションを保存
+    await this.saveSessionState();
+    
+    // バックグラウンドプロセスを終了
+    this.commandExecutor.killAllBackgroundProcesses();
+    
+    // 自動保存を停止
+    if (this.autoSaveInterval) {
+      clearInterval(this.autoSaveInterval);
+    }
+    
     console.log(chalk.yellow('\n👋 さようなら！'));
     this.rl.close();
     process.exit(0);
   }
 
+  private setupCommandExecutorListeners(): void {
+    // Background process events
+    this.commandExecutor.on('background:started', (data) => {
+      console.log(chalk.blue(`🚀 バックグラウンドプロセスを開始: ${data.command}`));
+      console.log(chalk.gray(`  ID: ${data.id}`));
+    });
+    
+    this.commandExecutor.on('background:output', (data) => {
+      // サーバー出力を表示（重要な情報のみ）
+      if (data.data.includes('Running on') || data.data.includes('Listening') || data.data.includes('Started')) {
+        console.log(chalk.green(`  → ${data.data.trim()}`));
+      }
+    });
+    
+    this.commandExecutor.on('server:ready', (data) => {
+      console.log(chalk.green(`
+✅ サーバーが起動しました！`));
+      console.log(chalk.cyan(`🌐 http://localhost:${data.port} でアクセス可能です`));
+      console.log(chalk.gray(`終了するには /stop ${data.id} または Ctrl+C`));
+    });
+    
+    this.commandExecutor.on('background:error', (data) => {
+      if (data.data && data.data.trim()) {
+        console.log(chalk.red(`  ⚠ ${data.data.trim()}`));
+      }
+    });
+    
+    this.commandExecutor.on('background:completed', (data) => {
+      console.log(chalk.yellow(`🏁 バックグラウンドプロセス終了: ${data.id} (コード: ${data.code})`))
+    });
+  }
+  
   private setupEventListeners(): void {
-    // Command executor events
+    // Command executor permission events
     this.commandExecutor.on('permission:required', (data) => {
       console.log(chalk.yellow(`\n⚠️ コマンド実行の許可が必要です: ${data.command}`));
       console.log(chalk.yellow('実行しますか？ (yes/no/always/never):'));
@@ -816,5 +945,253 @@ export class InteractiveChat {
         resolve(answer);
       });
     });
+  }
+  
+  private setupInputBufferListeners(): void {
+    // バッファから完全なメッセージを受信
+    this.inputBuffer.on('message', async (message: string) => {
+      const trimmedMessage = message.trim();
+      
+      if (!trimmedMessage) return;
+      
+      // コマンドかメッセージかを判定して処理
+      if (trimmedMessage.startsWith('/')) {
+        await this.handleCommand(trimmedMessage);
+      } else {
+        await this.handleMessage(trimmedMessage);
+      }
+      
+      if (this.running) {
+        this.rl.prompt();
+      }
+    });
+  }
+  
+  private setupErrorTrackerListeners(): void {
+    // エラー修正アクションのリスナー
+    this.errorTracker.on('fix:execute', async (data) => {
+      console.log(chalk.yellow(`\n🔧 修正コマンドを実行: ${data.command}`));
+      // コマンド実行をトリガー
+      await this.handleMessage(data.command);
+    });
+    
+    this.errorTracker.on('fix:create_file', async (data) => {
+      console.log(chalk.yellow(`\n📝 ファイル作成を提案: ${data.path}`));
+      // ファイル作成の提案をAIに送信
+      const prompt = `ファイル ${data.path} が見つかりません。このファイルを作成してください。`;
+      await this.handleMessage(prompt);
+    });
+    
+    this.errorTracker.on('fix:kill_port', async (data) => {
+      console.log(chalk.yellow(`\n🔌 ポート ${data.port} を解放します`));
+      // ポート解放コマンドを実行
+      const command = process.platform === 'win32' 
+        ? `netstat -ano | findstr :${data.port}` 
+        : `lsof -ti:${data.port} | xargs kill -9`;
+      await this.handleMessage(command);
+    });
+  }
+  
+  private isErrorMessage(message: string): boolean {
+    const errorPatterns = [
+      /error:/i,
+      /exception:/i,
+      /traceback/i,
+      /failed/i,
+      /module.*not found/i,
+      /cannot find/i,
+      /File ".+", line \d+/,
+      /SyntaxError/,
+      /IndentationError/,
+      /ModuleNotFoundError/,
+      /FileNotFoundError/,
+      /Permission denied/,
+      /port.*in use/i,
+      /address already in use/i
+    ];
+    
+    return errorPatterns.some(pattern => pattern.test(message));
+  }
+  
+  private async handleErrorMessage(errorMessage: string): Promise<void> {
+    console.log(chalk.red('\n🔍 エラーを検出しました:'));
+    console.log(chalk.gray(errorMessage.substring(0, 500)));
+    
+    // エラーコンテキストを記録
+    this.errorTracker.recordContext({
+      timestamp: new Date(),
+      type: 'execution',
+      operation: 'error_detected',
+      details: { errorMessage },
+      error: errorMessage
+    });
+    
+    // 自動修正提案を生成
+    const suggestions = await this.errorTracker.analyzeError(errorMessage);
+    
+    if (suggestions.length > 0) {
+      console.log(chalk.cyan('\n💡 自動修正提案:'));
+      suggestions.forEach((suggestion, index) => {
+        console.log(chalk.white(`${index + 1}. ${suggestion.description} (信頼度: ${suggestion.confidence})`));
+      });
+      
+      // 高信頼度の修正を自動実行
+      const highConfidenceFix = suggestions.find(s => s.confidence === 'high');
+      if (highConfidenceFix) {
+        console.log(chalk.green(`\n✨ 自動修正を実行: ${highConfidenceFix.description}`));
+        await highConfidenceFix.action();
+      } else {
+        // AIに修正を依頼
+        const context = this.errorTracker.getRecentContext(3);
+        const createdFiles = this.errorTracker.getCreatedFiles();
+        
+        const fixPrompt = `
+以下のエラーが発生しました。修正してください。
+
+エラー:
+${errorMessage}
+
+最近の操作:
+${context.map(c => `- ${c.operation}`).join('\n')}
+
+作成したファイル:
+${createdFiles.join('\n')}
+`;
+        
+        await this.handleNormalChat(fixPrompt);
+      }
+    } else {
+      // AIに修正を依頼
+      const fixPrompt = `以下のエラーが発生しました。原因を分析して修正してください:\n\n${errorMessage}`;
+      await this.handleNormalChat(fixPrompt);
+    }
+  }
+  
+  private showBackgroundProcesses(): void {
+    const processes = this.commandExecutor.getBackgroundProcesses();
+    
+    if (processes.length === 0) {
+      console.log(chalk.gray('バックグラウンドプロセスはありません'));
+      return;
+    }
+    
+    console.log(chalk.cyan('\n📦 バックグラウンドプロセス:'));
+    processes.forEach(proc => {
+      const status = proc.status === 'running' 
+        ? chalk.green('● 実行中') 
+        : proc.status === 'completed' 
+        ? chalk.gray('● 完了')
+        : chalk.red('● 失敗');
+      
+      console.log(`  ${proc.id}: ${status} - ${proc.command}`);
+      console.log(chalk.gray(`    開始: ${proc.startTime.toLocaleTimeString()}`));
+    });
+  }
+  
+  private async stopBackgroundProcess(args: string[]): Promise<void> {
+    if (args.length === 0) {
+      console.log(chalk.red('プロセスIDを指定してください'));
+      return;
+    }
+    
+    const processId = args[0];
+    const success = this.commandExecutor.killBackgroundProcess(processId);
+    
+    if (success) {
+      console.log(chalk.green(`✓ プロセス ${processId} を停止しました`));
+    } else {
+      console.log(chalk.red(`プロセス ${processId} が見つかりません`));
+    }
+  }
+  
+  private startAutoSave(): void {
+    // 5分ごとに自動保存
+    this.autoSaveInterval = setInterval(async () => {
+      await this.saveSessionState();
+    }, 5 * 60 * 1000);
+  }
+  
+  private async saveSessionState(): Promise<void> {
+    try {
+      const state = {
+        timestamp: new Date().toISOString(),
+        profile: this.currentProfile,
+        projectContext: this.projectContext,
+        sessionId: this.sessionManager.getCurrentSessionId(),
+        errorContext: {
+          createdFiles: this.errorTracker.getCreatedFiles(),
+          executedCommands: this.errorTracker.getExecutedCommands(),
+          recentContext: this.errorTracker.getRecentContext(10)
+        },
+        backgroundProcesses: this.commandExecutor.getBackgroundProcesses().map(p => ({
+          id: p.id,
+          command: p.command,
+          status: p.status,
+          startTime: p.startTime
+        })),
+        safeMode: this.safeMode
+      };
+      
+      await fs.writeJson(this.sessionFilePath, state, { spaces: 2 });
+      
+      // エラーコンテキストも保存
+      const contextPath = path.join(path.dirname(this.sessionFilePath), 'error-context.json');
+      await this.errorTracker.saveContext(contextPath);
+      
+    } catch (error) {
+      console.error(chalk.red('セッション保存エラー:'), error);
+    }
+  }
+  
+  private async restoreSession(): Promise<void> {
+    try {
+      if (!await fs.pathExists(this.sessionFilePath)) {
+        return;
+      }
+      
+      const state = await fs.readJson(this.sessionFilePath);
+      const ageMs = Date.now() - new Date(state.timestamp).getTime();
+      
+      // 24時間以内のセッションのみ復元
+      if (ageMs > 24 * 60 * 60 * 1000) {
+        console.log(chalk.gray('古いセッションは無視されました'));
+        return;
+      }
+      
+      console.log(chalk.cyan('🔄 前回のセッションを復元します...'));
+      
+      // プロファイルを復元
+      if (state.profile) {
+        this.currentProfile = state.profile;
+        this.agent = new SimpleChatAgent(this.currentProfile.model);
+      }
+      
+      // プロジェクトコンテキストを復元
+      if (state.projectContext) {
+        this.projectContext = state.projectContext;
+      }
+      
+      // エラーコンテキストを復元
+      const contextPath = path.join(path.dirname(this.sessionFilePath), 'error-context.json');
+      await this.errorTracker.loadContext(contextPath);
+      
+      // セーフモードを復元
+      if (state.safeMode !== undefined) {
+        this.safeMode = state.safeMode;
+      }
+      
+      // バックグラウンドプロセス情報を表示
+      if (state.backgroundProcesses && state.backgroundProcesses.length > 0) {
+        console.log(chalk.yellow('\n⚠ 前回のバックグラウンドプロセス:'));
+        state.backgroundProcesses.forEach((p: any) => {
+          console.log(chalk.gray(`  - ${p.command} (${p.status})`))
+        });
+      }
+      
+      console.log(chalk.green('✓ セッションを復元しました'));
+      
+    } catch (error) {
+      console.error(chalk.red('セッション復元エラー:'), error);
+    }
   }
 }

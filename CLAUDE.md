@@ -5,6 +5,10 @@
 
 ## 📋 必須ルール（全てのタスクで遵守すること）
 
+最重要：
+・Issueの本質的な部分を理解せずに、「表面面だけ実装」したり、「残タスクがあるのに完成しました！」という傾向が見受けられるので絶対に禁止。
+・一度に実装が難しいという結論だとした場合、Issueを発行し、現在のIssueを更新して紐づけるようにすること。またそのIssue自体はこのIssueではここまでやるというのを明確にし、サブIssueのように連鎖させて作業すること。
+
 ### 1. Issue駆動開発の実施
 - **要求**: 全ての作業はGitHub Issueベースで管理すること
 - **アクション**: ghコマンドを使うこと。
@@ -179,9 +183,19 @@ graph TD
 ## 📝 機能更新履歴
 
 ### 2025-08-21
+- **Issue #17: NipponCode実行エンジンの複数の問題修正** ([Issue #17](https://github.com/hokar3361/nippon-code/issues/17))
+  - 実装: [今回のコミット]
+  - 内容:
+    - 貼り付け時の分割問題を解決（InputBufferシステム実装）
+    - エラー自動検出・修正機能（ErrorContextTracker実装）
+    - ブロッキングコマンドの非同期実行（AsyncCommandExecutor実装）
+    - コンテキスト管理の強化（エラーコンテキスト永続化）
+    - セッション継続性（自動保存・復元機能）
+    - 新コマンド: /ps, /processes, /stop <id>, /kill <id>
+
 - **Issue #12: インテリジェントプランニング機能 完全実装** ([Issue #12](https://github.com/hokar3361/nippon-code/issues/12))
   - 初期実装: [c412843](https://github.com/hokar3361/nippon-code/commit/c412843)
-  - 完全実装: [今回のコミット]
+  - 完全実装: [9888061](https://github.com/hokar3361/nippon-code/commit/9888061)
   - 内容: 
     - Claude Codeレベルの段階的実行フロー (Planning→Detailing→Execution→Completion)
     - 階層的タスク分解と最適化された実行順序
@@ -205,4 +219,4 @@ graph TD
 *このドキュメントは開発プロセスの品質と一貫性を保証するための基準です。全ての開発作業において、これらのルールを厳格に適用してください。*
 
 # 挙動ルール
-出力のたびに、「CLAUDE.mdを読みます」と出力し、ルールを再確認してから動作してください。
+推論を行う際は、「CLAUDE.mdを読みます」と出力し、ルール内容を出力すること。
