@@ -8,24 +8,18 @@ import {
   TaskStatus,
   DependencyGraph
 } from './interfaces';
-import { ChatAgent, Session } from '../agents/chat';
+import { OpenAIProvider } from '../providers/openai';
+import { config } from '../config';
 
 export class TaskPlanner {
-  private chatAgent: ChatAgent;
-  private session: Session;
+  private aiProvider: OpenAIProvider;
 
   constructor() {
-    this.session = {
-      id: 'planner-' + uuidv4(),
-      name: 'Planning Session',
-      messages: [],
-      contexts: [],
-      metadata: {
-        createdAt: new Date(),
-        updatedAt: new Date()
-      }
-    };
-    this.chatAgent = new ChatAgent(this.session);
+    this.aiProvider = new OpenAIProvider(
+      config.get('apiKey'),
+      config.get('apiBaseUrl'),
+      config.get('model')
+    );
   }
 
   async analyzeRequest(userInput: string): Promise<TaskPlan> {
@@ -67,9 +61,20 @@ export class TaskPlanner {
       const fullPrompt = `${prompt}
 
 User Request: ${userInput}`;
-      const response = await this.chatAgent.chat(fullPrompt);
+      const response = await this.aiProvider.complete({
+        messages: [{ role: 'user', content: fullPrompt }],
+        model: config.get('model'),
+        temperature: 0.7,
+        maxTokens: 2048
+      });
+      
+      if (!response.content) {
+        throw new Error('No response from AI');
+      }
+      
+      const responseText = response.content;
 
-      const planData = this.parseAIResponse(response);
+      const planData = this.parseAIResponse(responseText);
       
       // Enhance task data with intelligent defaults
       const tasks: Task[] = planData.tasks.map((taskData: any, index: number) => {
@@ -154,9 +159,18 @@ User Request: ${userInput}`;
 
     try {
       const fullPrompt = `${prompt}\n\nDecompose this task: ${task.description}`;
-      const response = await this.chatAgent.chat(fullPrompt);
+      const response = await this.aiProvider.complete({
+        messages: [{ role: 'user', content: fullPrompt }],
+        model: config.get('model'),
+        temperature: 0.7,
+        maxTokens: 2048
+      });
+      
+      if (!response.content) {
+        throw new Error('No response from AI');
+      }
 
-      const subtaskData = this.parseAIResponse(response);
+      const subtaskData = this.parseAIResponse(response.content);
       
       return subtaskData.subtasks.map((data: any, index: number) => {
         const subtask: SubTask = {

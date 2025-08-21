@@ -18,6 +18,7 @@ import { autonomousExecutor } from '../execution/autonomous-executor';
 import { fileOperations } from '../execution/file-operations';
 import { commandRunner } from '../execution/command-runner';
 import { platformDetector } from '../utils/platform-detector';
+import { codeGenerator } from '../execution/code-generator';
 
 interface ChatProfile {
   name: string;
@@ -496,10 +497,38 @@ export class InteractiveChat {
   private async executeStep(step: any): Promise<void> {
     const description = step.description.toLowerCase();
     
-    // ファイル操作の実行
-    if (description.includes('create file') || description.includes('write')) {
+    // コード生成が必要なファイル作成
+    if (description.includes('create') && (description.includes('server') || description.includes('app') || description.includes('component'))) {
+      console.log(chalk.cyan(`  🤖 AIコード生成中: ${step.description}`));
+      
+      try {
+        const generatedFiles = await codeGenerator.generateFromDescription(step.description);
+        
+        for (const file of generatedFiles) {
+          console.log(chalk.gray(`    📄 ファイル作成: ${file.fileName}`));
+          await fileOperations.writeFile(file.fileName, file.content);
+        }
+      } catch (error) {
+        console.error(chalk.red(`    ❌ コード生成失敗: ${error}`));
+      }
+    }
+    // 通常のファイル操作
+    else if (description.includes('create file') || description.includes('write')) {
       const filePath = step.output || step.metadata?.path;
-      const content = step.metadata?.content || step.input || '';
+      let content = step.metadata?.content || step.input || '';
+      
+      // コンテンツが空の場合、AIで生成
+      if (!content && filePath) {
+        console.log(chalk.cyan(`  🤖 コンテンツ生成中: ${filePath}`));
+        try {
+          const generated = await codeGenerator.generateFromDescription(`Generate content for ${filePath}`);
+          if (generated.length > 0) {
+            content = generated[0].content;
+          }
+        } catch (error) {
+          console.error(chalk.yellow(`    ⚠️ コンテンツ生成スキップ`));
+        }
+      }
       
       if (filePath) {
         console.log(chalk.gray(`  📄 ファイル作成: ${filePath}`));
@@ -521,7 +550,7 @@ export class InteractiveChat {
     }
     // その他のタスク
     else {
-      console.log(chalk.gray(`  ⏭️ スキップ: ${step.description}`));
+      console.log(chalk.gray(`  ⏭️ 処理: ${step.description}`));
     }
   }
   
