@@ -128,7 +128,9 @@ export class TaskManager extends EventEmitter {
       }]
     };
 
-    this.recordResult(result);
+    // Record result without updating status (already set to 'skipped')
+    this.results.set(result.taskId, result);
+    this.emit('task:completed', result);
   }
 
   getNextPendingTask(planId: string): Task | null {
