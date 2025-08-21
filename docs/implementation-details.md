@@ -26,7 +26,7 @@
   "typescript": "^5.9.2",      // 型安全性
   "commander": "^11.1.0",      // CLIフレームワーク
   "inquirer": "^9.2.12",       // 対話的プロンプト
-  "axios": "^1.6.2",           // HTTPクライアント
+  "openai": "^5.13.1",         // OpenAI公式SDK（axios代替）
   "chalk": "^5.3.0",           // カラー出力
   "tiktoken": "^1.0.11",       // トークン数推定
   "dotenv": "^16.3.1",         // 環境変数管理
@@ -112,25 +112,36 @@ async *streamChat(message: string): AsyncGenerator<string> {
 - 日本語のトークン数推定が不正確な可能性
 - コンテキストが大きい場合の処理
 
-### 4.2 SSE (Server-Sent Events) パース
+### 4.2 OpenAI SDK統合
 
-**ファイル**: `src/providers/openai.ts` (streamComplete メソッド)
+**ファイル**: `src/providers/openai.ts`
+
+**変更内容** (2025-08-20):
+- axiosベースの実装からOpenAI公式SDKへ移行
+- SSEパースの手動実装が不要に
+- 自動リトライ機能（デフォルト2回）
+- 改善されたエラーハンドリング（OpenAI.APIError）
 
 ```typescript
-// SSEパースロジック
-let buffer = '';
-for await (const chunk of response.data) {
-  buffer += chunk.toString();
-  const lines = buffer.split('\n');
-  buffer = lines.pop() || '';
-  // 各行を処理...
+// OpenAI SDKの初期化
+this.client = new OpenAI({
+  apiKey: this.apiKey,
+  baseURL: this.baseUrl,
+  timeout: 120000,  // 2分
+  maxRetries: 2,    // 自動リトライ
+});
+
+// ストリーミング処理（簡潔に）
+for await (const chunk of stream) {
+  const content = chunk.choices[0]?.delta?.content || '';
+  if (content) yield { content, done: false };
 }
 ```
 
-**注意点**:
-- バッファリングによるメモリ使用
-- 不完全なJSONの処理
-- エラーハンドリング
+**利点**:
+- 公式サポートによる信頼性向上
+- 型安全性の向上
+- API変更への自動追従
 
 ### 4.3 セッション永続化
 
@@ -263,6 +274,14 @@ npm run dev -- --verbose
 - 複雑なロジックには説明コメント
 - TODOコメントの活用
 
+## 11. 変更履歴
+
+### 2025-08-20 (v0.1.1)
+- OpenAI API呼び出し部をaxiosから公式SDKへ移行
+- エラーハンドリングの改善
+- 自動リトライ機能の追加（2回）
+- 型安全性の向上
+
 ---
 更新日: 2025-08-20
-バージョン: 0.1.0
+バージョン: 0.1.1

@@ -63,7 +63,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
 }
 
 async function promptConfiguration(options: InitOptions): Promise<any> {
-  const questions = [];
+  const questions: any[] = [];
 
   // APIキー
   if (!options.apiKey) {

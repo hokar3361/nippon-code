@@ -41,6 +41,7 @@
     "inquirer": "^12.9.3",
     "marked": "^16.2.0",
     "marked-terminal": "^7.3.0",
+    "openai": "^5.13.1",
     "ora": "^8.0.1",
     "p-limit": "^7.1.0",
     "tiktoken": "^1.0.11",
