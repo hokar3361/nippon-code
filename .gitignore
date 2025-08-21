@@ -58,3 +58,5 @@ sessions/
 .nipponcode/
 *.session.json
 .cursorrules
+__examples/env/pyvenv.cfg
+__examples/env/*

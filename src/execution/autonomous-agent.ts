@@ -85,10 +85,20 @@ export class AutonomousAgent {
         // 5. 結果を表示
         console.log(chalk.green(`✓ ${result}`));
         
+        // 6. LLMに実行結果をフィードバックして確認
+        const verification = await this.verifyExecution(action, result, context);
+        if (!verification.success) {
+          console.log(chalk.yellow(`⚠️ LLM確認: ${verification.message}`));
+          context.lastError = verification.message;
+        }
+        
       } catch (error) {
         console.error(chalk.red(`\n❌ エラーが発生しました: ${error}`));
         context.lastError = String(error);
         context.executionHistory.push(`エラー: ${error}`);
+        
+        // エラーをLLMにフィードバック
+        await this.reportError(error, context);
       }
     }
 
@@ -278,6 +288,67 @@ MESSAGE: [ユーザーへのメッセージ]
 
       default:
         throw new Error(`未知のアクションタイプ: ${action.type}`);
+    }
+  }
+
+  private async verifyExecution(action: Action, result: string, _context: ExecutionContext): Promise<{ success: boolean; message?: string }> {
+    const prompt = `
+実行したアクション: ${action.type}
+${action.fileName ? `ファイル: ${action.fileName}` : ''}
+${action.command ? `コマンド: ${action.command}` : ''}
+結果: ${result}
+
+このアクションは成功しましたか？
+簡潔に"SUCCESS"または"FAILED: [理由]"で答えてください。`;
+
+    try {
+      const response = await this.aiProvider.complete({
+        messages: [{ role: 'user', content: prompt }],
+        model: config.get('model'),
+        temperature: 0.3,
+        maxTokens: 100
+      });
+
+      if (!response.content) {
+        return { success: true };
+      }
+
+      const content = response.content.toUpperCase();
+      if (content.includes('SUCCESS')) {
+        return { success: true };
+      } else if (content.includes('FAILED')) {
+        const reason = response.content.split(':')[1]?.trim() || '理由不明';
+        return { success: false, message: reason };
+      }
+
+      return { success: true };
+    } catch {
+      // 検証エラーの場合は続行
+      return { success: true };
+    }
+  }
+
+  private async reportError(error: any, context: ExecutionContext): Promise<void> {
+    const prompt = `
+エラーが発生しました: ${error}
+ユーザー要求: ${context.userRequest}
+最近の履歴: ${context.executionHistory.slice(-3).join('\n')}
+
+このエラーをどう修正すべきか、簡潔にアドバイスしてください。`;
+
+    try {
+      const response = await this.aiProvider.complete({
+        messages: [{ role: 'user', content: prompt }],
+        model: config.get('model'),
+        temperature: 0.5,
+        maxTokens: 200
+      });
+
+      if (response.content) {
+        console.log(chalk.cyan(`💡 AIアドバイス: ${response.content}`));
+      }
+    } catch {
+      // アドバイス取得エラーは無視
     }
   }
 

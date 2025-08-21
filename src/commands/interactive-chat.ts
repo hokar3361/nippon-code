@@ -27,6 +27,8 @@ interface ChatProfile {
 }
 
 export class InteractiveChat {
+  private multilineMode = false;
+  private multilineBuffer: string[] = [];
   private rl: readline.Interface;
   private agent: SimpleChatAgent;
   private sessionManager: SimpleSessionManager;
@@ -165,23 +167,58 @@ export class InteractiveChat {
     
     console.log(chalk.yellow('\n💬 対話モードを開始しました'));
     console.log(chalk.gray('終了: /exit または Ctrl+C'));
-    console.log(chalk.gray('ヘルプ: /help\n'));
+    console.log(chalk.gray('ヘルプ: /help'));
+    console.log(chalk.cyan('複数行入力: ``` で開始/終了、ペースト対応\n'));
     
     this.rl.prompt();
     
     this.rl.on('line', async (input) => {
       if (!this.running) return;
       
-      const trimmedInput = input.trim();
-      
-      if (trimmedInput.startsWith('/')) {
-        await this.handleCommand(trimmedInput);
-      } else if (trimmedInput) {
-        await this.handleMessage(trimmedInput);
+      // 複数行モードの処理
+      if (this.multilineMode) {
+        // 終了マーカーのチェック
+        if (input.trim() === '```') {
+          this.multilineMode = false;
+          const fullMessage = this.multilineBuffer.join('\n');
+          this.multilineBuffer = [];
+          
+          // 収集したメッセージを処理
+          if (fullMessage.trim()) {
+            if (fullMessage.trim().startsWith('/')) {
+              await this.handleCommand(fullMessage.trim());
+            } else {
+              await this.handleMessage(fullMessage);
+            }
+          }
+          
+          // プロンプトを戻す
+          this.rl.setPrompt(this.getPrompt());
+        } else {
+          // バッファに追加
+          this.multilineBuffer.push(input);
+          this.rl.setPrompt(chalk.gray('... '));
+        }
+      } else {
+        // 複数行モードの開始チェック
+        if (input.trim() === '```') {
+          this.multilineMode = true;
+          this.multilineBuffer = [];
+          console.log(chalk.gray('📝 複数行入力モード (終了: ```)。コピペ対応。'));
+          this.rl.setPrompt(chalk.gray('... '));
+        } else {
+          // 通常の処理
+          const trimmedInput = input.trim();
+          
+          if (trimmedInput.startsWith('/')) {
+            await this.handleCommand(trimmedInput);
+          } else if (trimmedInput) {
+            await this.handleMessage(trimmedInput);
+          }
+        }
       }
       
       if (this.running) {
-        this.rl.setPrompt(this.getPrompt());
         this.rl.prompt();
       }
     });
