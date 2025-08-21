@@ -179,6 +179,10 @@ graph TD
 ## 📝 機能更新履歴
 
 ### 2025-08-21
+- **Issue #12: インテリジェントプランニング機能 Phase 1** ([Issue #12](https://github.com/hokar3361/nippon-code/issues/12))
+  - 実装コミット: [c412843](https://github.com/hokar3361/nippon-code/commit/c412843)
+  - 内容: 段階的実行フロー実装、タスクプランナー/マネージャー/エグゼキューター追加、進捗トラッキング機能、新スラッシュコマンド追加
+
 - **Issue #2: OpenAI API呼び出し部を公式SDKへ移行** ([PR #3](https://github.com/hokar3361/nippon-code/pull/3))
   - 初回実装: [c236ac1](https://github.com/hokar3361/nippon-code/commit/c236ac1)
   - リファクタリング: [208f078](https://github.com/hokar3361/nippon-code/commit/208f078)
