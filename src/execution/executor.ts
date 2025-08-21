@@ -151,7 +151,7 @@ export class TaskExecutor extends EventEmitter {
   }
 
   private parseCommand(commandStr: string): Command {
-    const parts = commandStr.trim().split(/\s+/);
+    const parts = this.parseCommandArgs(commandStr.trim());
     const cmd = parts[0];
     const args = parts.slice(1);
 
@@ -172,6 +172,57 @@ export class TaskExecutor extends EventEmitter {
       args,
       workingDirectory: process.cwd()
     };
+  }
+
+  private parseCommandArgs(input: string): string[] {
+    const args: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    let quoteChar = '';
+    let escapeNext = false;
+
+    for (let i = 0; i < input.length; i++) {
+      const char = input[i];
+
+      if (escapeNext) {
+        current += char;
+        escapeNext = false;
+        continue;
+      }
+
+      if (char === '\\') {
+        escapeNext = true;
+        continue;
+      }
+
+      if (!inQuotes && (char === '"' || char === "'")) {
+        inQuotes = true;
+        quoteChar = char;
+        continue;
+      }
+
+      if (inQuotes && char === quoteChar) {
+        inQuotes = false;
+        quoteChar = '';
+        continue;
+      }
+
+      if (!inQuotes && char === ' ') {
+        if (current) {
+          args.push(current);
+          current = '';
+        }
+        continue;
+      }
+
+      current += char;
+    }
+
+    if (current) {
+      args.push(current);
+    }
+
+    return args;
   }
 
   private async checkSafety(command: Command, expectedLevel: SafetyLevel): Promise<{ safe: boolean; reason?: string }> {
@@ -294,11 +345,21 @@ export class TaskExecutor extends EventEmitter {
         }
       });
 
+      // Setup abort handler with cleanup
+      const abortHandler = () => {
+        child.kill('SIGTERM');
+      };
+      
       if (this.abortController) {
-        this.abortController.signal.addEventListener('abort', () => {
-          child.kill('SIGTERM');
-        });
+        this.abortController.signal.addEventListener('abort', abortHandler);
       }
+
+      // Cleanup listener on completion
+      child.on('exit', () => {
+        if (this.abortController) {
+          this.abortController.signal.removeEventListener('abort', abortHandler);
+        }
+      });
     });
   }
 
@@ -310,10 +371,11 @@ export class TaskExecutor extends EventEmitter {
       case 'read':
         return await fs.readFile(target, 'utf-8');
       
-      case 'write':
+      case 'write': {
         const content = rest.join(' ');
         await fs.writeFile(target, content);
         return { written: true, file: target };
+      }
       
       case 'delete':
         await fs.unlink(target);

@@ -84,8 +84,9 @@ User Request: ${userInput}`;
         approved: false
       };
     } catch (error) {
-      console.error('Failed to analyze request:', error);
-      throw new Error('Failed to create task plan');
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('Failed to analyze request:', errorMessage);
+      throw new Error(`Failed to create task plan: ${errorMessage}`);
     }
   }
 
@@ -240,7 +241,9 @@ User Request: ${userInput}`;
 
       return JSON.parse(response);
     } catch (error) {
-      console.error('Failed to parse AI response:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('Failed to parse AI response:', errorMessage);
+      // Return default structure to allow graceful degradation
       return { tasks: [], estimatedTotalDuration: 0 };
     }
   }
