@@ -53,9 +53,10 @@ export class TaskExecutor extends EventEmitter {
       
       const results: any[] = [];
       let currentProgress = 0;
-      const totalSteps = task.steps.length;
+      const steps = task.steps || [];
+      const totalSteps = steps.length;
 
-      for (const [index, step] of task.steps.entries()) {
+      for (const [index, step] of steps.entries()) {
         if (this.abortController.signal.aborted) {
           throw new Error('Task execution aborted');
         }
@@ -70,8 +71,10 @@ export class TaskExecutor extends EventEmitter {
           timestamp: new Date()
         });
 
-        if (step.requiresApproval) {
-          const approved = await this.requestApproval(step);
+        // Check if step requires approval (if it's an ExecutionStep)
+        const requiresApproval = (step as any).requiresApproval;
+        if (requiresApproval) {
+          const approved = await this.requestApproval(step as any);
           if (!approved) {
             this.log('warning', `Step skipped due to lack of approval: ${step.description}`);
             continue;
@@ -79,7 +82,7 @@ export class TaskExecutor extends EventEmitter {
         }
 
         try {
-          const stepResult = await this.executeStep(step);
+          const stepResult = await this.executeStep(step as any);
           results.push(stepResult);
           this.log('info', `Step completed: ${step.description}`);
         } catch (stepError: any) {

@@ -14,6 +14,10 @@ import { ProgressTracker } from '../execution/progress-tracker';
 import { ExecutionFlow } from '../execution/execution-flow';
 import { CommandExecutor } from '../execution/command-executor';
 import { TaskPlan, Permission } from '../planning/interfaces';
+import { autonomousExecutor } from '../execution/autonomous-executor';
+import { fileOperations } from '../execution/file-operations';
+import { commandRunner } from '../execution/command-runner';
+import { platformDetector } from '../utils/platform-detector';
 
 interface ChatProfile {
   name: string;
@@ -267,9 +271,6 @@ export class InteractiveChat {
         this.toggleSafeMode();
         break;
         
-      case '/execute':
-        await this.executePlan();
-        break;
         
       case '/abort':
         this.abortExecution();
@@ -393,37 +394,16 @@ export class InteractiveChat {
     this.isProcessing = true;
     
     try {
-      // プロジェクトコンテキストを含めてメッセージを送信
-      const contextualMessage = this.projectContext 
-        ? `[プロジェクトコンテキスト]\n${this.projectContext}\n\n[ユーザーメッセージ]\n${message}`
-        : message;
+      // タスク実行リクエストの判定
+      const isTaskRequest = this.isTaskRequest(message);
       
-      // Processingアニメーションを開始
-      const spinner = this.startProcessingAnimation();
-      
-      let fullResponse = '';
-      
-      // ストリーミングが有効な場合も、全て受信してから表示
-      if (this.agent.isStreaming()) {
-        for await (const chunk of this.agent.streamChat(contextualMessage)) {
-          fullResponse += chunk;
-        }
+      if (isTaskRequest) {
+        // 自動実行フロー
+        await this.handleAutonomousExecution(message);
       } else {
-        fullResponse = await this.agent.chat(contextualMessage);
+        // 通常のチャット応答
+        await this.handleNormalChat(message);
       }
-      
-      // アニメーションを停止
-      clearInterval(spinner);
-      process.stdout.write('\r' + ' '.repeat(50) + '\r');  // アニメーションをクリア
-      
-      // レスポンスを表示
-      console.log('\n' + chalk.cyan('🤖 NipponCode:'));
-      console.log(fullResponse);
-      console.log();
-      
-      // セッションに保存
-      await this.sessionManager.addMessage({ role: 'user', content: message });
-      await this.sessionManager.addMessage({ role: 'assistant', content: fullResponse });
       
     } catch (error: any) {
       console.error(chalk.red('\n❌ エラー:'), error.message);
@@ -431,6 +411,152 @@ export class InteractiveChat {
     } finally {
       this.isProcessing = false;
     }
+  }
+  
+  private isTaskRequest(message: string): boolean {
+    const taskKeywords = [
+      'create', 'make', 'build', 'implement', 'add', 'setup',
+      'install', 'configure', 'generate', 'write', 'develop',
+      'fix', 'update', 'modify', 'refactor', 'test', 'deploy',
+      '作成', '作って', '実装', '追加', 'セットアップ',
+      'インストール', '設定', '生成', '書いて', '開発',
+      '修正', '更新', '変更', 'リファクタ', 'テスト', 'デプロイ'
+    ];
+    
+    const lowerMessage = message.toLowerCase();
+    return taskKeywords.some(keyword => lowerMessage.includes(keyword));
+  }
+  
+  private async handleAutonomousExecution(request: string): Promise<void> {
+    console.log(chalk.cyan('\n🤖 タスクを分析して実行計画を作成します...'));
+    
+    const spinner = this.startProcessingAnimation('計画作成中');
+    
+    try {
+      // プラットフォーム検出
+      await platformDetector.detect();
+      
+      // タスク計画の作成
+      this.currentPlan = await this.taskPlanner.analyzeRequest(request);
+      
+      this.stopProcessingAnimation(spinner);
+      
+      // 計画の表示
+      console.log(this.taskPlanner.formatPlanForDisplay(this.currentPlan));
+      
+      // 自動承認設定の確認
+      if (!this.safeMode) {
+        console.log(chalk.green('\n✅ 自動実行を開始します...'));
+        await this.executeAutonomously();
+      } else {
+        console.log(chalk.yellow('\n⚠️ セーフモードが有効です。'));
+        console.log(chalk.yellow('/approve で承認して実行、または /execute で手動実行してください。'));
+      }
+      
+    } catch (error) {
+      this.stopProcessingAnimation(spinner);
+      console.error(chalk.red(`\n❌ タスク分析エラー: ${error}`));
+    }
+  }
+  
+  private async executeAutonomously(): Promise<void> {
+    if (!this.currentPlan) {
+      console.log(chalk.red('実行する計画がありません'));
+      return;
+    }
+    
+    // 自動実行エンジンの設定
+    autonomousExecutor.setOptions({
+      dryRun: false,
+      autoApprove: true,
+      continueOnError: false,
+      verbose: true
+    });
+    
+    try {
+      const tasks = this.currentPlan.tasks;
+      
+      for (const task of tasks) {
+        console.log(chalk.cyan(`\n🔧 実行中: ${task.name}`));
+        
+        // タスクステップを実際のファイル操作やコマンドに変換
+        for (const step of (task.steps || [])) {
+          await this.executeStep(step);
+        }
+      }
+      
+      console.log(chalk.green('\n✅ 全てのタスクが完了しました！'));
+      this.currentPlan = null;
+      
+    } catch (error) {
+      console.error(chalk.red(`\n❌ 実行エラー: ${error}`));
+    }
+  }
+  
+  private async executeStep(step: any): Promise<void> {
+    const description = step.description.toLowerCase();
+    
+    // ファイル操作の実行
+    if (description.includes('create file') || description.includes('write')) {
+      const filePath = step.output || step.metadata?.path;
+      const content = step.metadata?.content || step.input || '';
+      
+      if (filePath) {
+        console.log(chalk.gray(`  📄 ファイル作成: ${filePath}`));
+        await fileOperations.writeFile(filePath, content);
+      }
+    }
+    // コマンド実行
+    else if (description.includes('run') || description.includes('execute') || description.includes('install')) {
+      const command = step.metadata?.command || step.input;
+      
+      if (command) {
+        console.log(chalk.gray(`  ⚡ コマンド実行: ${command}`));
+        const result = await commandRunner.run(command, { silent: false });
+        
+        if (!result.success) {
+          console.error(chalk.red(`    ❌ コマンド失敗: ${result.stderr}`));
+        }
+      }
+    }
+    // その他のタスク
+    else {
+      console.log(chalk.gray(`  ⏭️ スキップ: ${step.description}`));
+    }
+  }
+  
+  private async handleNormalChat(message: string): Promise<void> {
+    // プロジェクトコンテキストを含めてメッセージを送信
+    const contextualMessage = this.projectContext 
+      ? `[プロジェクトコンテキスト]\n${this.projectContext}\n\n[ユーザーメッセージ]\n${message}`
+      : message;
+    
+    // Processingアニメーションを開始
+    const spinner = this.startProcessingAnimation();
+    
+    let fullResponse = '';
+    
+    // ストリーミングが有効な場合も、全て受信してから表示
+    if (this.agent.isStreaming()) {
+      for await (const chunk of this.agent.streamChat(contextualMessage)) {
+        fullResponse += chunk;
+      }
+    } else {
+      fullResponse = await this.agent.chat(contextualMessage);
+    }
+    
+    // アニメーションを停止
+    clearInterval(spinner);
+    process.stdout.write('\r' + ' '.repeat(50) + '\r');  // アニメーションをクリア
+    
+    // レスポンスを表示
+    console.log('\n' + chalk.cyan('🤖 NipponCode:'));
+    console.log(fullResponse);
+    console.log();
+    
+    // セッションに保存
+    await this.sessionManager.addMessage({ role: 'user', content: message });
+    await this.sessionManager.addMessage({ role: 'assistant', content: fullResponse });
   }
   
   private startProcessingAnimation(message: string = 'Processing'): NodeJS.Timeout {
@@ -466,11 +592,10 @@ export class InteractiveChat {
     console.log(chalk.white('  /reload         - コンテキスト再読み込み'));
     console.log(chalk.cyan('\n🚀 インテリジェント実行コマンド:'));
     console.log(chalk.white('  /plan [task]    - タスクの実行計画を作成'));
-    console.log(chalk.white('  /approve        - 計画を承認'));
-    console.log(chalk.white('  /execute        - 計画を実行'));
+    console.log(chalk.white('  /approve        - 計画を承認して自動実行'));
     console.log(chalk.white('  /skip           - 現在のタスクをスキップ'));
     console.log(chalk.white('  /rollback       - 直前の変更を取り消し'));
-    console.log(chalk.white('  /safe-mode      - セーフモードの切り替え'));
+    console.log(chalk.white('  /safe-mode      - セーフモード切替（手動承認）'));
     console.log(chalk.white('  /abort          - 実行を中止'));
     console.log(chalk.white('  /config         - 現在の設定を表示'));
     console.log(chalk.white('  /save           - セッションを保存'));
@@ -651,50 +776,13 @@ export class InteractiveChat {
     this.currentPlan.approved = true;
     this.currentPlan.approvedAt = new Date();
     
-    if (this.executionFlow) {
-      this.executionFlow.approve();
-    }
-    
     console.log(chalk.green('✓ 計画が承認されました'));
+    console.log(chalk.cyan('\n🚀 自動実行を開始します...'));
+    
+    // 承認後は自動的に実行
+    await this.executeAutonomously();
   }
   
-  private async executePlan(): Promise<void> {
-    if (!this.currentPlan) {
-      console.log(chalk.red('実行する計画がありません'));
-      return;
-    }
-    
-    if (!this.currentPlan.approved) {
-      console.log(chalk.yellow('計画がまだ承認されていません。/approve で承認してください'));
-      return;
-    }
-    
-    if (!this.executionFlow) {
-      this.executionFlow = new ExecutionFlow({
-        autoApprove: !this.safeMode,
-        verbose: true,
-        dryRun: false
-      });
-      this.setupExecutionFlowEvents();
-    }
-    
-    try {
-      console.log(chalk.cyan('\n🚀 実行を開始します...'));
-      const result = await this.executionFlow.execute(this.currentPlan.userRequest);
-      
-      console.log(chalk.green(`\n✅ 実行完了!`));
-      console.log(chalk.white(`成功率: ${(result.successRate * 100).toFixed(1)}%`));
-      console.log(chalk.white(`総実行時間: ${result.totalDuration}ms`));
-      
-      // Clear plan after execution
-      this.currentPlan = null;
-      this.executionFlow = null;
-      this._planMode = false;
-      
-    } catch (error) {
-      console.error(chalk.red(`\n❌ 実行エラー: ${error}`));
-    }
-  }
   
   private async skipCurrentTask(): Promise<void> {
     if (!this.executionFlow) {

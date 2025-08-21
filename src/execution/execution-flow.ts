@@ -230,7 +230,7 @@ export class ExecutionFlow extends EventEmitter {
         
         this.emit('task:detailed', {
           task: task.name,
-          steps: detailedTask.steps.length,
+          steps: (detailedTask.steps || []).length,
           resources: detailedTask.resources.length
         });
       }

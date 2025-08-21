@@ -3,6 +3,16 @@ export type TaskStatus = 'pending' | 'planning' | 'executing' | 'completed' | 'f
 export type SafetyLevel = 'safe' | 'caution' | 'danger' | 'forbidden';
 export type Permission = 'yes' | 'no' | 'always' | 'never';
 
+export interface TaskStep {
+  id: string;
+  name: string;
+  description: string;
+  input?: string;
+  output?: string;
+  safetyLevel: SafetyLevel;
+  metadata?: Record<string, any>;
+}
+
 export interface Task {
   id: string;
   name: string;
@@ -11,6 +21,7 @@ export interface Task {
   status: TaskStatus;
   estimatedDuration?: number;
   dependencies?: string[];
+  steps?: TaskStep[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -21,7 +32,8 @@ export interface SubTask extends Task {
 }
 
 export interface DetailedTask extends SubTask {
-  steps: ExecutionStep[];
+  steps?: TaskStep[];
+  executionSteps?: ExecutionStep[];
   resources: ResourceRequirement[];
   risks: Risk[];
   rollbackStrategy?: RollbackStrategy;
@@ -29,11 +41,15 @@ export interface DetailedTask extends SubTask {
 
 export interface ExecutionStep {
   id: string;
+  name: string;
   description: string;
   command?: string;
   expectedOutput?: string;
   requiresApproval: boolean;
   safetyLevel: SafetyLevel;
+  input?: string;
+  output?: string;
+  metadata?: Record<string, any>;
 }
 
 export interface ResourceRequirement {

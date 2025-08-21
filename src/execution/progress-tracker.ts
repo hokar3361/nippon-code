@@ -12,15 +12,15 @@ export class ProgressTracker extends EventEmitter {
   private totalTasks: number = 0;
   private currentPhase: string = '';
 
-  startTask(task: Task): void {
+  startTask(taskId: string, taskName?: string): void {
     const spinner = ora({
-      text: `${task.name}`,
-      prefixText: this.getStatusPrefix(task.status)
+      text: taskName || `Task ${taskId}`,
+      prefixText: this.getStatusPrefix('executing')
     }).start();
 
-    this.spinners.set(task.id, spinner);
-    this.startTimes.set(task.id, Date.now());
-    this.progress.set(task.id, 0);
+    this.spinners.set(taskId, spinner);
+    this.startTimes.set(taskId, Date.now());
+    this.progress.set(taskId, 0);
   }
 
   updateProgress(update: ProgressUpdate): void {
@@ -177,7 +177,7 @@ export class ProgressTracker extends EventEmitter {
     return `${hours}h ${minutes}m`;
   }
 
-  private getStatusPrefix(status: TaskStatus): string {
+  private getStatusPrefix(status: TaskStatus | string): string {
     switch (status) {
       case 'pending': return chalk.gray('[PENDING]');
       case 'planning': return chalk.blue('[PLANNING]');
