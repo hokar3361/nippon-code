@@ -12,6 +12,7 @@
 **このプロジェクトは現在開発初期段階です。**
 - ✅ 基本的なチャット機能のみ実装済み
 - ✅ OpenAI公式SDK (v5.13.1) への移行完了 (2025-08-21)
+- ✅ インテリジェントプランニング機能 Phase 1 実装 (2025-08-21) 
 - 🚧 その他の機能は開発中
 
 ## 概要
@@ -25,6 +26,7 @@ NipponCodeは、日本語での対話に最適化されたシンプルなAIチ�
 - ⚙️ **API設定** - 複数プロバイダーとモデルの設定
 - 📁 **基本的な分析** - プロジェクト構造の表示（実験的）
 - 🔄 **セッション管理** - 会話の保存と再開
+- 🎯 **インテリジェントプランニング** - タスクの自動分解と段階的実行（Phase 1）
 
 ### 制限事項（今後改善予定）
 
@@ -125,6 +127,43 @@ nipponcode config --set model=gpt-4   # モデルを変更
 nipponcode config --get model         # 現在のモデルを確認
 ```
 
+## スラッシュコマンド
+
+チャットモード内で使用できるコマンド:
+
+### 実装済みコマンド
+| コマンド | 説明 | 使用例 |
+|---------|------|--------|
+| `/help` | ヘルプとコマンド一覧表示 | `/help` |
+| `/exit`, `/quit` | 対話モード終了 | `/exit` |
+| `/clear` | 画面クリア | `/clear` |
+| `/profile` | プロファイル管理 | `/profile switch dev` |
+| `/model` | AIモデル変更 | `/model gpt-4` |
+| `/session` | セッション管理 | `/session new` |
+| `/context` | コンテキスト表示 | `/context` |
+| `/reload` | 設定再読み込み | `/reload` |
+| `/config` | 現在の設定表示 | `/config` |
+| `/save` | セッション保存 | `/save` |
+| `/plan` | 実行計画の作成 | `/plan React/TypeScriptでTodoアプリを作って` |
+| `/approve` | 計画の承認・実行 | `/approve` |
+| `/skip` | 現在タスクのスキップ | `/skip` |
+| `/safe-mode` | セーフモード切り替え | `/safe-mode` |
+
+### 実装予定コマンド
+| コマンド | 説明 | 関連Issue | ステータス |
+|---------|------|-----------|------------|
+| `/code` | コード生成・編集・実行 | [#10](https://github.com/hokar3361/nippon-code/issues/10) | 🚧 開発中 |
+| `/run` | OSコマンド実行 | [#5](https://github.com/hokar3361/nippon-code/issues/5) | 📋 計画中 |
+| `/file` | ファイル操作 | [#6](https://github.com/hokar3361/nippon-code/issues/6) | 📋 計画中 |
+| `/template` | プロジェクトテンプレート生成 | [#9](https://github.com/hokar3361/nippon-code/issues/9) | 📋 計画中 |
+| `/analyze` | プロジェクト分析 | - | 📋 計画中 |
+| `/vendor` | APIベンダー切り替え | [#7](https://github.com/hokar3361/nippon-code/issues/7) | 📋 計画中 |
+| `/thinking` | Thinkingモデル表示切替 | [#8](https://github.com/hokar3361/nippon-code/issues/8) | 📋 計画中 |
+| `/sandbox` | サンドボックス環境管理 | [#10](https://github.com/hokar3361/nippon-code/issues/10) | 📋 計画中 |
+| `/rollback` | 直前の変更を取り消し | [#12](https://github.com/hokar3361/nippon-code/issues/12) | 📋 Phase 3予定 |
+
+> 💡 **ヒント**: `/` を入力すると利用可能なコマンドの候補が表示されます（[Issue #11](https://github.com/hokar3361/nippon-code/issues/11)で実装予定）
+
 ## 設定ファイル
 
 `.nipponcode/config.json`:
@@ -179,6 +218,12 @@ npm run build
 ## 最近の更新
 
 ### 2025-08-21
+- ✅ **インテリジェントプランニング機能 Phase 1** ([Issue #12](https://github.com/hokar3361/nippon-code/issues/12))
+  - 段階的実行フロー（プランニング→詳細化→実行）の実装
+  - タスクの自動分解と依存関係管理
+  - 進捗トラッキングと可視化
+  - `/plan`, `/approve`, `/skip`, `/safe-mode` コマンドの追加
+  - セーフモードによる危険操作の確認機能
 - ✅ **OpenAI API呼び出し部を公式SDKへ移行** ([PR #3](https://github.com/hokar3361/nippon-code/pull/3))
   - axiosからOpenAI公式SDK (v5.13.1)への移行
   - 自動リトライ機能（2回）の追加
@@ -187,27 +232,36 @@ npm run build
 
 ## 今後の開発予定
 
+### 現在開発中（Issues）
+- 🚧 [#12](https://github.com/hokar3361/nippon-code/issues/12) インテリジェントプランニング機能（Phase 2-4開発中）
+- 🚧 [#4](https://github.com/hokar3361/nippon-code/issues/4) OpenRouter/gpt-oss統合と出力パーサー実装
+- 🚧 [#5](https://github.com/hokar3361/nippon-code/issues/5) クロスプラットフォーム対応のコマンド実行機能
+- 🚧 [#6](https://github.com/hokar3361/nippon-code/issues/6) ファイル操作とプロジェクト生成機能
+- 🚧 [#7](https://github.com/hokar3361/nippon-code/issues/7) モデル非依存の汎用プロンプト設計
+- 🚧 [#8](https://github.com/hokar3361/nippon-code/issues/8) Thinkingモデルの中間思考プロセス対応
+- 🚧 [#9](https://github.com/hokar3361/nippon-code/issues/9) フレームワーク対応のテンプレート機能
+- 🚧 [#10](https://github.com/hokar3361/nippon-code/issues/10) インタラクティブなコード生成・実行機能
+- 🚧 [#11](https://github.com/hokar3361/nippon-code/issues/11) スラッシュコマンドの自動補完機能
+
 ### フェーズ1（現在）
 - ✅ 基本的なチャット機能
 - ✅ OpenAI/Anthropic API統合
 - ✅ OpenAI公式SDKへの移行（2025-08-21完了）
-- ⬜ ユニットテストの実装
-- ⬜ エラーハンドリングの改善
-- ⬜ セッション保存機能の強化
+- ✅ スラッシュコマンド基本実装
+- 🚧 エラーハンドリングの改善
+- 🚧 セッション永続化機能
 
-### フェーズ2
-- ⬜ マルチターン会話の改善
-- ⬜ コンテキスト管理
-- ⬜ プロンプトテンプレート
+### フェーズ2（次期開発）
+- ⬜ コード生成・実行エンジン
+- ⬜ マルチモデル対応（gpt-5, gpt-oss-120b）
+- ⬜ プロジェクトテンプレート機能
+- ⬜ ファイル操作とコンテキスト管理
 
-### フェーズ3
-- ⬜ ファイル読み込み機能
-- ⬜ 簡単なコード提案
-
-### 将来的な構想
+### フェーズ3（将来構想）
 - ⬜ VSCode拡張機能
 - ⬜ Web UI
 - ⬜ ローカルモデル対応
+- ⬜ プラグインシステム
 
 ## トラブルシューティング
 

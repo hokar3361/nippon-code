@@ -7,6 +7,11 @@ import { SimpleSessionManager } from '../session/simple-manager';
 import fs from 'fs-extra';
 import path from 'path';
 import { globSync } from 'glob';
+import { TaskPlanner } from '../planning/planner';
+import { TaskManager } from '../planning/task-manager';
+import { TaskExecutor } from '../execution/executor';
+import { ProgressTracker } from '../execution/progress-tracker';
+import { TaskPlan, DetailedTask } from '../planning/interfaces';
 
 interface ChatProfile {
   name: string;
@@ -26,6 +31,12 @@ export class InteractiveChat {
   private running: boolean = true;
   private projectContext: string = '';
   private isProcessing: boolean = false;
+  private taskPlanner: TaskPlanner;
+  private taskManager: TaskManager;
+  private taskExecutor: TaskExecutor;
+  private progressTracker: ProgressTracker;
+  private currentPlan: TaskPlan | null = null;
+  private safeMode: boolean = false;
 
   constructor() {
     this.rl = readline.createInterface({
@@ -42,6 +53,15 @@ export class InteractiveChat {
     // デフォルトプロファイル設定
     this.currentProfile = this.profiles.get('default') || this.createDefaultProfile();
     this.agent = new SimpleChatAgent(this.currentProfile.model);
+    
+    // タスク管理システムの初期化
+    this.taskPlanner = new TaskPlanner();
+    this.taskManager = new TaskManager();
+    this.progressTracker = new ProgressTracker();
+    this.taskExecutor = new TaskExecutor(this.taskManager);
+    
+    // イベントリスナーの設定
+    this.setupEventListeners();
   }
 
   private createDefaultProfile(): ChatProfile {
@@ -218,6 +238,26 @@ export class InteractiveChat {
         
       case '/save':
         await this.saveSession();
+        break;
+        
+      case '/plan':
+        await this.handlePlanCommand(args);
+        break;
+        
+      case '/approve':
+        await this.approvePlan();
+        break;
+        
+      case '/skip':
+        await this.skipCurrentTask();
+        break;
+        
+      case '/rollback':
+        await this.rollbackLastTask();
+        break;
+        
+      case '/safe-mode':
+        this.toggleSafeMode();
         break;
         
       default:
@@ -406,6 +446,12 @@ export class InteractiveChat {
     console.log(chalk.white('  /reload         - コンテキスト再読み込み'));
     console.log(chalk.white('  /config         - 現在の設定を表示'));
     console.log(chalk.white('  /save           - セッションを保存'));
+    console.log(chalk.cyan('\n🚀 高度な機能:\n'));
+    console.log(chalk.white('  /plan [request] - 実行計画を作成'));
+    console.log(chalk.white('  /approve        - 現在の計画を承認・実行'));
+    console.log(chalk.white('  /skip           - 現在のタスクをスキップ'));
+    console.log(chalk.white('  /rollback       - 直前の変更を取り消し'));
+    console.log(chalk.white('  /safe-mode      - セーフモードを切り替え'));
     console.log();
   }
 
@@ -445,5 +491,196 @@ export class InteractiveChat {
     console.log(chalk.yellow('\n👋 さようなら！'));
     this.rl.close();
     process.exit(0);
+  }
+
+  private setupEventListeners(): void {
+    // タスクマネージャーのイベント
+    this.taskManager.on('task:statusChanged', ({ taskId, newStatus, task }) => {
+      this.progressTracker.updateTaskStatus(taskId, newStatus, task.name);
+    });
+
+    this.taskManager.on('task:progress', (update) => {
+      this.progressTracker.updateProgress(update);
+    });
+
+    this.taskManager.on('task:completed', (result) => {
+      this.progressTracker.completeTask(
+        result.taskId,
+        result.status === 'success' ? 'success' : 'failure'
+      );
+    });
+
+    // タスクエグゼキューターのイベント
+    this.taskExecutor.on('approval:required', async ({ step }) => {
+      console.log(chalk.yellow(`\n⚠️ 承認が必要です: ${step.description}`));
+      console.log(chalk.gray(`安全レベル: ${step.safetyLevel}`));
+      
+      if (this.safeMode) {
+        const answer = await this.askQuestion('実行しますか？ (y/n): ');
+        this.taskExecutor.emit('approval:response', answer.toLowerCase() === 'y');
+      } else {
+        console.log(chalk.green('自動承認（セーフモードではありません）'));
+        this.taskExecutor.emit('approval:response', true);
+      }
+    });
+
+    this.taskExecutor.on('log', (entry) => {
+      if (entry.level === 'error') {
+        console.log(chalk.red(`[${entry.level}] ${entry.message}`));
+      } else if (entry.level === 'warning') {
+        console.log(chalk.yellow(`[${entry.level}] ${entry.message}`));
+      }
+    });
+  }
+
+  private async handlePlanCommand(args: string[]): Promise<void> {
+    if (args.length === 0) {
+      if (this.currentPlan) {
+        console.log(this.taskPlanner.formatPlanForDisplay(this.currentPlan));
+      } else {
+        console.log(chalk.yellow('現在の計画はありません。リクエストを指定してください。'));
+      }
+      return;
+    }
+
+    const request = args.join(' ');
+    console.log(chalk.cyan('📋 実行計画を作成中...'));
+    
+    try {
+      const plan = await this.taskPlanner.analyzeRequest(request);
+      const validation = await this.taskPlanner.validatePlan(plan);
+      
+      if (!validation.valid) {
+        console.log(chalk.red('計画の検証に失敗しました:'));
+        validation.errors.forEach(err => console.log(chalk.red(`  - ${err}`)));
+        return;
+      }
+
+      if (validation.warnings.length > 0) {
+        console.log(chalk.yellow('警告:'));
+        validation.warnings.forEach(warn => console.log(chalk.yellow(`  - ${warn}`)));
+      }
+
+      this.currentPlan = plan;
+      this.taskManager.registerPlan(plan);
+      
+      console.log(this.taskPlanner.formatPlanForDisplay(plan));
+      console.log(chalk.green('\n✓ 計画が作成されました。/approve で実行します。'));
+      
+    } catch (error: any) {
+      console.log(chalk.red(`計画の作成に失敗しました: ${error.message}`));
+    }
+  }
+
+  private async approvePlan(): Promise<void> {
+    if (!this.currentPlan) {
+      console.log(chalk.yellow('承認する計画がありません。先に /plan で計画を作成してください。'));
+      return;
+    }
+
+    if (this.currentPlan.approved) {
+      console.log(chalk.yellow('この計画は既に承認されています。'));
+      return;
+    }
+
+    this.taskManager.approvePlan(this.currentPlan.id);
+    console.log(chalk.green('✓ 計画を承認しました。実行を開始します...'));
+    
+    await this.executePlan();
+  }
+
+  private async executePlan(): Promise<void> {
+    if (!this.currentPlan) return;
+
+    const tasks = this.taskPlanner.getExecutionOrder(this.currentPlan.tasks);
+    this.progressTracker.displayPlanSummary(tasks);
+    this.progressTracker.displayTaskList(tasks);
+
+    let successCount = 0;
+    let failureCount = 0;
+    let skippedCount = 0;
+    const startTime = Date.now();
+
+    for (const task of tasks) {
+      const nextTask = this.taskManager.getNextPendingTask(this.currentPlan.id);
+      if (!nextTask) continue;
+
+      if (nextTask.id !== task.id) {
+        console.log(chalk.yellow(`依存関係によりタスク ${task.name} をスキップ`));
+        skippedCount++;
+        continue;
+      }
+
+      this.progressTracker.startTask(task);
+      
+      try {
+        // 簡易的な実行（Phase 1では詳細実装をスキップ）
+        const detailedTask: DetailedTask = {
+          ...task,
+          parentId: '',
+          order: 0,
+          steps: [{
+            id: `step-${task.id}`,
+            description: task.description,
+            requiresApproval: this.safeMode,
+            safetyLevel: 'safe'
+          }],
+          resources: [],
+          risks: []
+        };
+
+        const result = await this.taskExecutor.executeTask(detailedTask);
+        
+        if (result.status === 'success') {
+          successCount++;
+        } else {
+          failureCount++;
+        }
+      } catch (error: any) {
+        console.log(chalk.red(`タスク実行エラー: ${error.message}`));
+        failureCount++;
+      }
+    }
+
+    const totalDuration = Date.now() - startTime;
+    this.progressTracker.displayCompletionSummary(
+      successCount,
+      failureCount,
+      skippedCount,
+      totalDuration
+    );
+
+    this.currentPlan = null;
+  }
+
+  private async skipCurrentTask(): Promise<void> {
+    const activeTask = this.taskManager.getActiveTask();
+    if (!activeTask) {
+      console.log(chalk.yellow('スキップするアクティブなタスクがありません。'));
+      return;
+    }
+
+    this.taskManager.skipTask(activeTask.id, 'ユーザーリクエスト');
+    console.log(chalk.green(`✓ タスク "${activeTask.name}" をスキップしました。`));
+  }
+
+  private async rollbackLastTask(): Promise<void> {
+    console.log(chalk.yellow('⚠️ ロールバック機能は Phase 3 で実装予定です。'));
+  }
+
+  private toggleSafeMode(): void {
+    this.safeMode = !this.safeMode;
+    console.log(chalk.green(`✓ セーフモード: ${this.safeMode ? 'ON' : 'OFF'}`));
+    if (this.safeMode) {
+      console.log(chalk.yellow('すべての危険な操作で確認が必要になります。'));
+    }
+  }
+
+  private askQuestion(question: string): Promise<string> {
+    return new Promise((resolve) => {
+      this.rl.question(chalk.cyan(question), (answer) => {
+        resolve(answer);
+      });
+    });
   }
 }
