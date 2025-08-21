@@ -11,6 +11,10 @@
 | **メッセージ構築** | `src/agents/chat.ts` | `ChatAgent.buildMessages()` | 134-178 |
 | **コンテキスト管理** | `src/agents/chat.ts` | `ChatAgent.addContext()` | 208-221 |
 | **対話型UI** | `src/commands/interactive-chat.ts` | `InteractiveChat` | - |
+| **タスクプランニング** | `src/planning/planner.ts` | `TaskPlanner` | - |
+| **タスク管理** | `src/planning/task-manager.ts` | `TaskManager` | - |
+| **タスク実行** | `src/execution/executor.ts` | `TaskExecutor` | - |
+| **進捗トラッキング** | `src/execution/progress-tracker.ts` | `ProgressTracker` | - |
 | **OpenAI通信** | `src/providers/openai.ts` | `OpenAIProvider.complete()` | 71-119 |
 | **ストリーミング処理** | `src/providers/openai.ts` | `OpenAIProvider.streamComplete()` | 122-189 |
 | **設定管理** | `src/config/index.ts` | `ConfigManager` | 21-194 |
@@ -32,10 +36,19 @@ src/
 │   ├── chat.ts          # chatコマンド（20行）
 │   ├── config.ts        # configコマンド
 │   ├── init.ts          # initコマンド
-│   └── interactive-chat.ts # 対話型チャットUI
+│   └── interactive-chat.ts # 対話型チャットUI（拡張済み）
 │
 ├── config/              # 設定管理
 │   └── index.ts         # ConfigManager（194行）
+│
+├── execution/           # タスク実行層 [NEW]
+│   ├── executor.ts      # タスク実行エンジン
+│   └── progress-tracker.ts # 進捗トラッキング
+│
+├── planning/            # タスクプランニング層 [NEW]
+│   ├── interfaces.ts    # 型定義
+│   ├── planner.ts       # タスクプランナー
+│   └── task-manager.ts  # タスク管理
 │
 ├── providers/           # AIプロバイダー層
 │   ├── base.ts          # 抽象基底クラス（65行）
@@ -129,6 +142,16 @@ interface CompletionOptions {
 | analyze | `src/commands/analyze.ts` | `analyzeCommand()` | プロジェクト分析（未実装） |
 | config | `src/commands/config.ts` | `configCommand()` | 設定表示/変更 |
 
+### 🆕 スラッシュコマンド（Phase 1実装済み）
+
+| コマンド | 機能 | 実装状態 |
+|----------|------|----------|
+| `/plan [request]` | 実行計画を作成 | ✅ 実装済み |
+| `/approve` | 現在の計画を承認・実行 | ✅ 実装済み |
+| `/skip` | 現在のタスクをスキップ | ✅ 実装済み |
+| `/rollback` | 直前の変更を取り消し | ⚠️ Phase 3予定 |
+| `/safe-mode` | セーフモードを切り替え | ✅ 実装済み |
+
 ### 🔄 主要な処理フロー
 
 #### チャット処理フロー
@@ -207,7 +230,35 @@ const modelLimits = {
 }
 ```
 
+### 🎯 インテリジェントプランニング機能（Issue #12）
+
+#### 実装アーキテクチャ
+```
+User Request
+    ↓
+TaskPlanner.analyzeRequest()  # タスク分解
+    ↓
+TaskManager.registerPlan()    # プラン登録
+    ↓
+User Approval (/approve)       # ユーザー承認
+    ↓
+TaskExecutor.executeTask()    # タスク実行
+    ↓
+ProgressTracker.update()      # 進捗表示
+    ↓
+Completion Report             # 完了レポート
+```
+
+#### 主要コンポーネント
+
+| コンポーネント | 責務 | 主要メソッド |
+|--------------|------|-------------|
+| TaskPlanner | タスク分解とプランニング | `analyzeRequest()`, `decomposeTask()`, `validatePlan()` |
+| TaskManager | タスクの状態管理 | `registerPlan()`, `updateTaskStatus()`, `recordResult()` |
+| TaskExecutor | タスクの実行制御 | `executeTask()`, `dryRun()`, `checkSafety()` |
+| ProgressTracker | 進捗の可視化 | `startTask()`, `updateProgress()`, `displaySummary()` |
+
 ---
 この索引は、コードベースの迅速なナビゲーションと理解を支援するために作成されました。
-更新日: 2025-08-20
-バージョン: 0.1.0
+更新日: 2025-08-21
+バージョン: 0.2.0

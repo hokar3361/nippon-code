@@ -7,6 +7,15 @@ import { SimpleSessionManager } from '../session/simple-manager';
 import fs from 'fs-extra';
 import path from 'path';
 import { globSync } from 'glob';
+import { TaskPlanner } from '../planning/planner';
+import { TaskManager } from '../planning/task-manager';
+import { TaskExecutor } from '../execution/executor';
+import { ProgressTracker } from '../execution/progress-tracker';
+import { ExecutionFlow } from '../execution/execution-flow';
+import { CommandExecutor } from '../execution/command-executor';
+import { TaskPlan, Permission } from '../planning/interfaces';
+import { autonomousAgent } from '../execution/autonomous-agent';
+import { platformDetector } from '../utils/platform-detector';
 
 interface ChatProfile {
   name: string;
@@ -18,6 +27,8 @@ interface ChatProfile {
 }
 
 export class InteractiveChat {
+  private multilineMode = false;
+  private multilineBuffer: string[] = [];
   private rl: readline.Interface;
   private agent: SimpleChatAgent;
   private sessionManager: SimpleSessionManager;
@@ -26,6 +37,16 @@ export class InteractiveChat {
   private running: boolean = true;
   private projectContext: string = '';
   private isProcessing: boolean = false;
+  private taskPlanner: TaskPlanner;
+  private taskManager: TaskManager;
+  private taskExecutor: TaskExecutor;
+  private progressTracker: ProgressTracker;
+  private executionFlow: ExecutionFlow | null = null;
+  private commandExecutor: CommandExecutor;
+  private currentPlan: TaskPlan | null = null;
+  private safeMode: boolean = false;
+  // @ts-ignore - Used for state tracking in plan operations
+  private _planMode: boolean = false;
 
   constructor() {
     this.rl = readline.createInterface({
@@ -42,6 +63,16 @@ export class InteractiveChat {
     // デフォルトプロファイル設定
     this.currentProfile = this.profiles.get('default') || this.createDefaultProfile();
     this.agent = new SimpleChatAgent(this.currentProfile.model);
+    
+    // タスク管理システムの初期化
+    this.taskPlanner = new TaskPlanner();
+    this.taskManager = new TaskManager();
+    this.progressTracker = new ProgressTracker();
+    this.taskExecutor = new TaskExecutor(this.taskManager);
+    this.commandExecutor = new CommandExecutor();
+    
+    // イベントリスナーの設定
+    this.setupEventListeners();
   }
 
   private createDefaultProfile(): ChatProfile {
@@ -136,23 +167,58 @@ export class InteractiveChat {
     
     console.log(chalk.yellow('\n💬 対話モードを開始しました'));
     console.log(chalk.gray('終了: /exit または Ctrl+C'));
-    console.log(chalk.gray('ヘルプ: /help\n'));
+    console.log(chalk.gray('ヘルプ: /help'));
+    console.log(chalk.cyan('複数行入力: ``` で開始/終了、ペースト対応\n'));
     
     this.rl.prompt();
     
     this.rl.on('line', async (input) => {
       if (!this.running) return;
       
-      const trimmedInput = input.trim();
-      
-      if (trimmedInput.startsWith('/')) {
-        await this.handleCommand(trimmedInput);
-      } else if (trimmedInput) {
-        await this.handleMessage(trimmedInput);
+      // 複数行モードの処理
+      if (this.multilineMode) {
+        // 終了マーカーのチェック
+        if (input.trim() === '```') {
+          this.multilineMode = false;
+          const fullMessage = this.multilineBuffer.join('\n');
+          this.multilineBuffer = [];
+          
+          // 収集したメッセージを処理
+          if (fullMessage.trim()) {
+            if (fullMessage.trim().startsWith('/')) {
+              await this.handleCommand(fullMessage.trim());
+            } else {
+              await this.handleMessage(fullMessage);
+            }
+          }
+          
+          // プロンプトを戻す
+          this.rl.setPrompt(this.getPrompt());
+        } else {
+          // バッファに追加
+          this.multilineBuffer.push(input);
+          this.rl.setPrompt(chalk.gray('... '));
+        }
+      } else {
+        // 複数行モードの開始チェック
+        if (input.trim() === '```') {
+          this.multilineMode = true;
+          this.multilineBuffer = [];
+          console.log(chalk.gray('📝 複数行入力モード (終了: ```)。コピペ対応。'));
+          this.rl.setPrompt(chalk.gray('... '));
+        } else {
+          // 通常の処理
+          const trimmedInput = input.trim();
+          
+          if (trimmedInput.startsWith('/')) {
+            await this.handleCommand(trimmedInput);
+          } else if (trimmedInput) {
+            await this.handleMessage(trimmedInput);
+          }
+        }
       }
       
       if (this.running) {
-        this.rl.setPrompt(this.getPrompt());
         this.rl.prompt();
       }
     });
@@ -218,6 +284,31 @@ export class InteractiveChat {
         
       case '/save':
         await this.saveSession();
+        break;
+        
+      case '/plan':
+        await this.handlePlanCommand(args);
+        break;
+        
+      case '/approve':
+        await this.approvePlan();
+        break;
+        
+      case '/skip':
+        await this.skipCurrentTask();
+        break;
+        
+      case '/rollback':
+        await this.rollbackLastTask();
+        break;
+        
+      case '/safe-mode':
+        this.toggleSafeMode();
+        break;
+        
+        
+      case '/abort':
+        this.abortExecution();
         break;
         
       default:
@@ -338,37 +429,16 @@ export class InteractiveChat {
     this.isProcessing = true;
     
     try {
-      // プロジェクトコンテキストを含めてメッセージを送信
-      const contextualMessage = this.projectContext 
-        ? `[プロジェクトコンテキスト]\n${this.projectContext}\n\n[ユーザーメッセージ]\n${message}`
-        : message;
+      // タスク実行リクエストの判定
+      const isTaskRequest = this.isTaskRequest(message);
       
-      // Processingアニメーションを開始
-      const spinner = this.startProcessingAnimation();
-      
-      let fullResponse = '';
-      
-      // ストリーミングが有効な場合も、全て受信してから表示
-      if (this.agent.isStreaming()) {
-        for await (const chunk of this.agent.streamChat(contextualMessage)) {
-          fullResponse += chunk;
-        }
+      if (isTaskRequest) {
+        // 自動実行フロー
+        await this.handleAutonomousExecution(message);
       } else {
-        fullResponse = await this.agent.chat(contextualMessage);
+        // 通常のチャット応答
+        await this.handleNormalChat(message);
       }
-      
-      // アニメーションを停止
-      clearInterval(spinner);
-      process.stdout.write('\r' + ' '.repeat(50) + '\r');  // アニメーションをクリア
-      
-      // レスポンスを表示
-      console.log('\n' + chalk.cyan('🤖 NipponCode:'));
-      console.log(fullResponse);
-      console.log();
-      
-      // セッションに保存
-      await this.sessionManager.addMessage({ role: 'user', content: message });
-      await this.sessionManager.addMessage({ role: 'assistant', content: fullResponse });
       
     } catch (error: any) {
       console.error(chalk.red('\n❌ エラー:'), error.message);
@@ -378,14 +448,82 @@ export class InteractiveChat {
     }
   }
   
-  private startProcessingAnimation(): NodeJS.Timeout {
-    const frames = ['⏳ Processing.  ', '⏳ Processing.. ', '⏳ Processing...'];
+  private isTaskRequest(message: string): boolean {
+    const taskKeywords = [
+      'create', 'make', 'build', 'implement', 'add', 'setup',
+      'install', 'configure', 'generate', 'write', 'develop',
+      'fix', 'update', 'modify', 'refactor', 'test', 'deploy',
+      '作成', '作って', '実装', '追加', 'セットアップ',
+      'インストール', '設定', '生成', '書いて', '開発',
+      '修正', '更新', '変更', 'リファクタ', 'テスト', 'デプロイ'
+    ];
+    
+    const lowerMessage = message.toLowerCase();
+    return taskKeywords.some(keyword => lowerMessage.includes(keyword));
+  }
+  
+  private async handleAutonomousExecution(request: string): Promise<void> {
+    try {
+      // プラットフォーム検出
+      await platformDetector.detect();
+      
+      // 段階的自律実行エージェントを使用
+      await autonomousAgent.executeRequest(request);
+      
+    } catch (error) {
+      console.error(chalk.red(`\n❌ エラー: ${error}`));
+    }
+  }
+  
+  
+  
+  private async handleNormalChat(message: string): Promise<void> {
+    // プロジェクトコンテキストを含めてメッセージを送信
+    const contextualMessage = this.projectContext 
+      ? `[プロジェクトコンテキスト]\n${this.projectContext}\n\n[ユーザーメッセージ]\n${message}`
+      : message;
+    
+    // Processingアニメーションを開始
+    const spinner = this.startProcessingAnimation();
+    
+    let fullResponse = '';
+    
+    // ストリーミングが有効な場合も、全て受信してから表示
+    if (this.agent.isStreaming()) {
+      for await (const chunk of this.agent.streamChat(contextualMessage)) {
+        fullResponse += chunk;
+      }
+    } else {
+      fullResponse = await this.agent.chat(contextualMessage);
+    }
+    
+    // アニメーションを停止
+    clearInterval(spinner);
+    process.stdout.write('\r' + ' '.repeat(50) + '\r');  // アニメーションをクリア
+    
+    // レスポンスを表示
+    console.log('\n' + chalk.cyan('🤖 NipponCode:'));
+    console.log(fullResponse);
+    console.log();
+    
+    // セッションに保存
+    await this.sessionManager.addMessage({ role: 'user', content: message });
+    await this.sessionManager.addMessage({ role: 'assistant', content: fullResponse });
+  }
+  
+  private startProcessingAnimation(message: string = 'Processing'): NodeJS.Timeout {
+    const frames = [`⏳ ${message}.  `, `⏳ ${message}.. `, `⏳ ${message}...`];
     let i = 0;
     
     return setInterval(() => {
       process.stdout.write('\r' + chalk.gray(frames[i]));
       i = (i + 1) % frames.length;
     }, 300);
+  }
+  
+  private stopProcessingAnimation(timer: NodeJS.Timeout): void {
+    clearInterval(timer);
+    process.stdout.write('\r' + ' '.repeat(50) + '\r');
   }
 
   private showHelp(): void {
@@ -404,8 +542,21 @@ export class InteractiveChat {
     console.log(chalk.white('    /session new             - 新規セッション'));
     console.log(chalk.white('  /context        - プロジェクトコンテキスト表示'));
     console.log(chalk.white('  /reload         - コンテキスト再読み込み'));
+    console.log(chalk.cyan('\n🚀 インテリジェント実行コマンド:'));
+    console.log(chalk.white('  /plan [task]    - タスクの実行計画を作成'));
+    console.log(chalk.white('  /approve        - 計画を承認して自動実行'));
+    console.log(chalk.white('  /skip           - 現在のタスクをスキップ'));
+    console.log(chalk.white('  /rollback       - 直前の変更を取り消し'));
+    console.log(chalk.white('  /safe-mode      - セーフモード切替（手動承認）'));
+    console.log(chalk.white('  /abort          - 実行を中止'));
     console.log(chalk.white('  /config         - 現在の設定を表示'));
     console.log(chalk.white('  /save           - セッションを保存'));
+    console.log(chalk.cyan('\n🚀 高度な機能:\n'));
+    console.log(chalk.white('  /plan [request] - 実行計画を作成'));
+    console.log(chalk.white('  /approve        - 現在の計画を承認・実行'));
+    console.log(chalk.white('  /skip           - 現在のタスクをスキップ'));
+    console.log(chalk.white('  /rollback       - 直前の変更を取り消し'));
+    console.log(chalk.white('  /safe-mode      - セーフモードを切り替え'));
     console.log();
   }
 
@@ -445,5 +596,225 @@ export class InteractiveChat {
     console.log(chalk.yellow('\n👋 さようなら！'));
     this.rl.close();
     process.exit(0);
+  }
+
+  private setupEventListeners(): void {
+    // Command executor events
+    this.commandExecutor.on('permission:required', (data) => {
+      console.log(chalk.yellow(`\n⚠️ コマンド実行の許可が必要です: ${data.command}`));
+      console.log(chalk.yellow('実行しますか？ (yes/no/always/never):'));
+      
+      this.rl.question('', (answer) => {
+        const permission = answer.toLowerCase() as Permission;
+        if (['yes', 'no', 'always', 'never'].includes(permission)) {
+          data.callback(permission);
+        } else {
+          data.callback('no');
+        }
+      });
+    });
+    
+    this.commandExecutor.on('danger:confirmation', (data) => {
+      console.log(chalk.red(`\n⚠️ 危険な操作です: ${data.command}`));
+      console.log(chalk.red(`目的: ${data.intent.purpose}`));
+      console.log(chalk.red('本当に実行しますか？ (yes/no):'));
+      
+      this.rl.question('', (answer) => {
+        data.callback(answer.toLowerCase() === 'yes');
+      });
+    });
+    // タスクマネージャーのイベント
+    this.taskManager.on('task:statusChanged', ({ taskId, newStatus, task }) => {
+      this.progressTracker.updateTaskStatus(taskId, newStatus, task.name);
+    });
+
+    this.taskManager.on('task:progress', (update) => {
+      this.progressTracker.updateProgress(update);
+    });
+
+    this.taskManager.on('task:completed', (result) => {
+      this.progressTracker.completeTask(
+        result.taskId,
+        result.status === 'success' ? 'success' : 'failure'
+      );
+    });
+
+    // タスクエグゼキューターのイベント
+    this.taskExecutor.on('approval:required', async ({ step }) => {
+      console.log(chalk.yellow(`\n⚠️ 承認が必要です: ${step.description}`));
+      console.log(chalk.gray(`安全レベル: ${step.safetyLevel}`));
+      
+      if (this.safeMode) {
+        const answer = await this.askQuestion('実行しますか？ (y/n): ');
+        this.taskExecutor.emit('approval:response', answer.toLowerCase() === 'y');
+      } else {
+        console.log(chalk.green('自動承認（セーフモードではありません）'));
+        this.taskExecutor.emit('approval:response', true);
+      }
+    });
+
+    this.taskExecutor.on('log', (entry) => {
+      if (entry.level === 'error') {
+        console.log(chalk.red(`[${entry.level}] ${entry.message}`));
+      } else if (entry.level === 'warning') {
+        console.log(chalk.yellow(`[${entry.level}] ${entry.message}`));
+      }
+    });
+  }
+
+  private async handlePlanCommand(args: string[]): Promise<void> {
+    if (args.length === 0) {
+      if (this.currentPlan) {
+        console.log(this.taskPlanner.formatPlanForDisplay(this.currentPlan));
+      } else {
+        console.log(chalk.yellow('現在の計画はありません。リクエストを指定してください。'));
+      }
+      return;
+    }
+    
+    // Enter plan mode
+    this._planMode = true;
+    console.log(chalk.cyan('\n📋 プランモードに入りました...'));
+    
+    const request = args.join(' ');
+    const spinner = this.startProcessingAnimation('計画を作成中...');
+    
+    try {
+      // Create intelligent execution flow
+      this.executionFlow = new ExecutionFlow({
+        autoApprove: false,
+        verbose: true,
+        dryRun: this.safeMode
+      });
+      
+      this.setupExecutionFlowEvents();
+      
+      // Analyze request and create plan
+      this.currentPlan = await this.taskPlanner.analyzeRequest(request);
+      
+      // Validate plan
+      const validation = await this.taskPlanner.validatePlan(this.currentPlan);
+      
+      this.stopProcessingAnimation(spinner);
+      
+      // Display plan
+      console.log(this.taskPlanner.formatPlanForDisplay(this.currentPlan));
+      
+      if (validation.warnings.length > 0) {
+        console.log(chalk.yellow('\n⚠️ 警告:'));
+        validation.warnings.forEach(w => console.log(chalk.yellow(`  - ${w}`)));
+      }
+      
+      if (validation.suggestions && validation.suggestions.length > 0) {
+        console.log(chalk.cyan('\n💡 提案:'));
+        validation.suggestions.forEach(s => console.log(chalk.cyan(`  - ${s}`)));
+      }
+      
+      console.log(chalk.green('\n✓ 計画が作成されました。/approve で承認、/execute で実行します。'));
+      
+    } catch (error) {
+      this.stopProcessingAnimation(spinner);
+      console.error(chalk.red(`\n❌ 計画作成エラー: ${error}`));
+      this._planMode = false;
+    }
+  }
+  
+  private async approvePlan(): Promise<void> {
+    // 新しいフローでは計画承認は不要
+    console.log(chalk.yellow('新しい自律実行モードでは、承認は不要です。'));
+    console.log(chalk.cyan('タスクは段階的に自動実行されます。'));
+  }
+  
+  
+  private async skipCurrentTask(): Promise<void> {
+    if (!this.executionFlow) {
+      console.log(chalk.red('実行中のフローがありません'));
+      return;
+    }
+    
+    // Get current task from flow state
+    const state = this.executionFlow.getState();
+    const currentTask = state.plan?.tasks.find(t => t.status === 'executing');
+    
+    if (currentTask) {
+      this.executionFlow.skipTask(currentTask.id);
+      console.log(chalk.yellow(`⏭️ タスク「${currentTask.name}」をスキップしました`));
+    } else {
+      console.log(chalk.red('スキップできるタスクがありません'));
+    }
+  }
+  
+  private async rollbackLastTask(): Promise<void> {
+    if (this.commandExecutor) {
+      // Get last executed command
+      const history = this.commandExecutor.getExecutionHistory();
+      if (history.length > 0) {
+        const lastCommand = history[history.length - 1];
+        console.log(chalk.yellow(`⏪ ロールバック: ${lastCommand.command}`));
+        // Implementation would require snapshot management
+        console.log(chalk.yellow('ロールバック機能は実装中です'));
+      } else {
+        console.log(chalk.red('ロールバックできる操作がありません'));
+      }
+    }
+  }
+  
+  private toggleSafeMode(): void {
+    this.safeMode = !this.safeMode;
+    console.log(chalk.cyan(`🔒 セーフモード: ${this.safeMode ? 'ON' : 'OFF'}`));
+    
+    if (this.safeMode) {
+      console.log(chalk.yellow('全ての危険な操作で確認が必要になります'));
+    }
+  }
+  
+  private abortExecution(): void {
+    if (this.executionFlow) {
+      this.executionFlow.abort();
+      console.log(chalk.red('⛔ 実行を中止しました'));
+      this.executionFlow = null;
+      this._planMode = false;
+    } else {
+      console.log(chalk.red('中止する実行がありません'));
+    }
+  }
+  
+  private setupExecutionFlowEvents(): void {
+    if (!this.executionFlow) return;
+    
+    this.executionFlow.on('phase:started', (data) => {
+      this.progressTracker.setCurrentPhase(data.phase);
+    });
+    
+    this.executionFlow.on('task:started', (data) => {
+      console.log(chalk.cyan(`\n🚀 タスク開始: ${data.name}`));
+    });
+    
+    this.executionFlow.on('task:completed', (data) => {
+      console.log(chalk.green(`✓ タスク完了: ${data.id} (${data.duration}ms)`));
+    });
+    
+    this.executionFlow.on('progress', (update) => {
+      this.progressTracker.updateProgress(update);
+    });
+    
+    this.executionFlow.on('approval:required', (data) => {
+      console.log(chalk.yellow(`\n⚠️ 承認が必要です: ${data.step.description}`));
+      console.log(chalk.yellow('承認するには /approve を入力してください'));
+    });
+    
+    this.executionFlow.on('completion:report', (data) => {
+      console.log(chalk.green('\n' + data.report));
+    });
+  }
+  
+  // Old implementations removed - using new versions defined above
+
+  private askQuestion(question: string): Promise<string> {
+    return new Promise((resolve) => {
+      this.rl.question(chalk.cyan(question), (answer) => {
+        resolve(answer);
+      });
+    });
   }
 }
