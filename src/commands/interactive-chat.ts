@@ -14,11 +14,8 @@ import { ProgressTracker } from '../execution/progress-tracker';
 import { ExecutionFlow } from '../execution/execution-flow';
 import { CommandExecutor } from '../execution/command-executor';
 import { TaskPlan, Permission } from '../planning/interfaces';
-import { autonomousExecutor } from '../execution/autonomous-executor';
-import { fileOperations } from '../execution/file-operations';
-import { commandRunner } from '../execution/command-runner';
+import { autonomousAgent } from '../execution/autonomous-agent';
 import { platformDetector } from '../utils/platform-detector';
-import { codeGenerator } from '../execution/code-generator';
 
 interface ChatProfile {
   name: string;
@@ -429,130 +426,19 @@ export class InteractiveChat {
   }
   
   private async handleAutonomousExecution(request: string): Promise<void> {
-    console.log(chalk.cyan('\n🤖 タスクを分析して実行計画を作成します...'));
-    
-    const spinner = this.startProcessingAnimation('計画作成中');
-    
     try {
       // プラットフォーム検出
       await platformDetector.detect();
       
-      // タスク計画の作成
-      this.currentPlan = await this.taskPlanner.analyzeRequest(request);
-      
-      this.stopProcessingAnimation(spinner);
-      
-      // 計画の表示
-      console.log(this.taskPlanner.formatPlanForDisplay(this.currentPlan));
-      
-      // 自動承認設定の確認
-      if (!this.safeMode) {
-        console.log(chalk.green('\n✅ 自動実行を開始します...'));
-        await this.executeAutonomously();
-      } else {
-        console.log(chalk.yellow('\n⚠️ セーフモードが有効です。'));
-        console.log(chalk.yellow('/approve で承認して実行、または /execute で手動実行してください。'));
-      }
+      // 段階的自律実行エージェントを使用
+      await autonomousAgent.executeRequest(request);
       
     } catch (error) {
-      this.stopProcessingAnimation(spinner);
-      console.error(chalk.red(`\n❌ タスク分析エラー: ${error}`));
+      console.error(chalk.red(`\n❌ エラー: ${error}`));
     }
   }
   
-  private async executeAutonomously(): Promise<void> {
-    if (!this.currentPlan) {
-      console.log(chalk.red('実行する計画がありません'));
-      return;
-    }
-    
-    // 自動実行エンジンの設定
-    autonomousExecutor.setOptions({
-      dryRun: false,
-      autoApprove: true,
-      continueOnError: false,
-      verbose: true
-    });
-    
-    try {
-      const tasks = this.currentPlan.tasks;
-      
-      for (const task of tasks) {
-        console.log(chalk.cyan(`\n🔧 実行中: ${task.name}`));
-        
-        // タスクステップを実際のファイル操作やコマンドに変換
-        for (const step of (task.steps || [])) {
-          await this.executeStep(step);
-        }
-      }
-      
-      console.log(chalk.green('\n✅ 全てのタスクが完了しました！'));
-      this.currentPlan = null;
-      
-    } catch (error) {
-      console.error(chalk.red(`\n❌ 実行エラー: ${error}`));
-    }
-  }
   
-  private async executeStep(step: any): Promise<void> {
-    const description = step.description.toLowerCase();
-    
-    // コード生成が必要なファイル作成
-    if (description.includes('create') && (description.includes('server') || description.includes('app') || description.includes('component'))) {
-      console.log(chalk.cyan(`  🤖 AIコード生成中: ${step.description}`));
-      
-      try {
-        const generatedFiles = await codeGenerator.generateFromDescription(step.description);
-        
-        for (const file of generatedFiles) {
-          console.log(chalk.gray(`    📄 ファイル作成: ${file.fileName}`));
-          await fileOperations.writeFile(file.fileName, file.content);
-        }
-      } catch (error) {
-        console.error(chalk.red(`    ❌ コード生成失敗: ${error}`));
-      }
-    }
-    // 通常のファイル操作
-    else if (description.includes('create file') || description.includes('write')) {
-      const filePath = step.output || step.metadata?.path;
-      let content = step.metadata?.content || step.input || '';
-      
-      // コンテンツが空の場合、AIで生成
-      if (!content && filePath) {
-        console.log(chalk.cyan(`  🤖 コンテンツ生成中: ${filePath}`));
-        try {
-          const generated = await codeGenerator.generateFromDescription(`Generate content for ${filePath}`);
-          if (generated.length > 0) {
-            content = generated[0].content;
-          }
-        } catch (error) {
-          console.error(chalk.yellow(`    ⚠️ コンテンツ生成スキップ`));
-        }
-      }
-      
-      if (filePath) {
-        console.log(chalk.gray(`  📄 ファイル作成: ${filePath}`));
-        await fileOperations.writeFile(filePath, content);
-      }
-    }
-    // コマンド実行
-    else if (description.includes('run') || description.includes('execute') || description.includes('install')) {
-      const command = step.metadata?.command || step.input;
-      
-      if (command) {
-        console.log(chalk.gray(`  ⚡ コマンド実行: ${command}`));
-        const result = await commandRunner.run(command, { silent: false });
-        
-        if (!result.success) {
-          console.error(chalk.red(`    ❌ コマンド失敗: ${result.stderr}`));
-        }
-      }
-    }
-    // その他のタスク
-    else {
-      console.log(chalk.gray(`  ⏭️ 処理: ${step.description}`));
-    }
-  }
   
   private async handleNormalChat(message: string): Promise<void> {
     // プロジェクトコンテキストを含めてメッセージを送信
@@ -797,19 +683,9 @@ export class InteractiveChat {
   }
   
   private async approvePlan(): Promise<void> {
-    if (!this.currentPlan) {
-      console.log(chalk.red('承認する計画がありません'));
-      return;
-    }
-    
-    this.currentPlan.approved = true;
-    this.currentPlan.approvedAt = new Date();
-    
-    console.log(chalk.green('✓ 計画が承認されました'));
-    console.log(chalk.cyan('\n🚀 自動実行を開始します...'));
-    
-    // 承認後は自動的に実行
-    await this.executeAutonomously();
+    // 新しいフローでは計画承認は不要
+    console.log(chalk.yellow('新しい自律実行モードでは、承認は不要です。'));
+    console.log(chalk.cyan('タスクは段階的に自動実行されます。'));
   }
   
   
