@@ -21,6 +21,11 @@ export class TaskManager extends EventEmitter {
     }
     this.emit('plan:registered', plan);
   }
+  
+  addTask(task: Task): void {
+    this.tasks.set(task.id, task);
+    this.emit('task:added', task);
+  }
 
   approvePlan(planId: string): boolean {
     const plan = this.plans.get(planId);

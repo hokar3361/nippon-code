@@ -12,7 +12,11 @@
 **このプロジェクトは現在開発初期段階です。**
 - ✅ 基本的なチャット機能のみ実装済み
 - ✅ OpenAI公式SDK (v5.13.1) への移行完了 (2025-08-21)
-- ✅ インテリジェントプランニング機能 Phase 1 実装 (2025-08-21) 
+- ✅ **[新] インテリジェントプランニング&実行フロー完全実装 (2025-08-21)**
+  - Claude Codeレベルの段階的実行フロー
+  - 階層的タスク分解と依存関係管理
+  - コマンド実行管理とセーフティチェック
+  - リアルタイム進捗トラッキング
 - 🚧 その他の機能は開発中
 
 ## 概要
@@ -26,7 +30,14 @@ NipponCodeは、日本語での対話に最適化されたシンプルなAIチ�
 - ⚙️ **API設定** - 複数プロバイダーとモデルの設定
 - 📁 **基本的な分析** - プロジェクト構造の表示（実験的）
 - 🔄 **セッション管理** - 会話の保存と再開
-- 🎯 **インテリジェントプランニング** - タスクの自動分解と段階的実行（Phase 1）
+- 🎯 **[新] 高度なインテリジェント実行システム**
+  - `/plan` - タスクを自動分解して実行計画を作成
+  - `/approve` - 計画を承認
+  - `/execute` - 計画を段階的に実行
+  - `/skip` - 現在のタスクをスキップ
+  - `/rollback` - 変更をロールバック
+  - `/safe-mode` - 危険な操作で確認を必須に
+  - `/abort` - 実行を中止
 
 ### 制限事項（今後改善予定）
 
@@ -145,9 +156,12 @@ nipponcode config --get model         # 現在のモデルを確認
 | `/config` | 現在の設定表示 | `/config` |
 | `/save` | セッション保存 | `/save` |
 | `/plan` | 実行計画の作成 | `/plan React/TypeScriptでTodoアプリを作って` |
-| `/approve` | 計画の承認・実行 | `/approve` |
+| `/approve` | 計画の承認 | `/approve` |
+| `/execute` | 計画の実行 | `/execute` |
 | `/skip` | 現在タスクのスキップ | `/skip` |
+| `/rollback` | 直前の変更を取り消し | `/rollback` |
 | `/safe-mode` | セーフモード切り替え | `/safe-mode` |
+| `/abort` | 実行を中止 | `/abort` |
 
 ### 実装予定コマンド
 | コマンド | 説明 | 関連Issue | ステータス |
@@ -160,7 +174,7 @@ nipponcode config --get model         # 現在のモデルを確認
 | `/vendor` | APIベンダー切り替え | [#7](https://github.com/hokar3361/nippon-code/issues/7) | 📋 計画中 |
 | `/thinking` | Thinkingモデル表示切替 | [#8](https://github.com/hokar3361/nippon-code/issues/8) | 📋 計画中 |
 | `/sandbox` | サンドボックス環境管理 | [#10](https://github.com/hokar3361/nippon-code/issues/10) | 📋 計画中 |
-| `/rollback` | 直前の変更を取り消し | [#12](https://github.com/hokar3361/nippon-code/issues/12) | 📋 Phase 3予定 |
+| `/execute-flow` | 高度な実行フロー | [#12](https://github.com/hokar3361/nippon-code/issues/12) | ✅ 完成 |
 
 > 💡 **ヒント**: `/` を入力すると利用可能なコマンドの候補が表示されます（[Issue #11](https://github.com/hokar3361/nippon-code/issues/11)で実装予定）
 

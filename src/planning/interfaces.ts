@@ -138,6 +138,7 @@ export interface CommandIntent {
   category: 'read' | 'write' | 'execute' | 'delete' | 'network';
   targetResources: string[];
   estimatedRisk: SafetyLevel;
+  alternatives?: string[];
 }
 
 export interface DryRunResult {

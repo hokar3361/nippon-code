@@ -7,6 +7,10 @@ export class ProgressTracker extends EventEmitter {
   private spinners: Map<string, Ora> = new Map();
   private progress: Map<string, number> = new Map();
   private startTimes: Map<string, number> = new Map();
+  private taskDependencies: Map<string, string[]> = new Map();
+  private completedTasks: Set<string> = new Set();
+  private totalTasks: number = 0;
+  private currentPhase: string = '';
 
   startTask(task: Task): void {
     const spinner = ora({
@@ -214,5 +218,106 @@ export class ProgressTracker extends EventEmitter {
     this.spinners.clear();
     this.progress.clear();
     this.startTimes.clear();
+    this.taskDependencies.clear();
+    this.completedTasks.clear();
+  }
+
+  getOverallProgress(): number {
+    if (this.totalTasks === 0) return 0;
+    return Math.round((this.completedTasks.size / this.totalTasks) * 100);
+  }
+
+  setTotalTasks(count: number): void {
+    this.totalTasks = count;
+  }
+
+  setCurrentPhase(phase: string): void {
+    this.currentPhase = phase;
+    console.log(chalk.bold.magenta(`\n🔄 Phase: ${phase}`));
+    console.log(chalk.gray('═'.repeat(50)));
+  }
+
+  displayPhaseProgress(phaseName: string, progress: number): void {
+    const progressBar = this.createProgressBar(progress);
+    console.log(
+      chalk.cyan(`${phaseName}: `) +
+      progressBar +
+      chalk.white(` ${progress}%`)
+    );
+  }
+
+  displayDependencyGraph(tasks: Task[]): void {
+    console.log(chalk.bold.cyan('\n🔗 Task Dependencies:'));
+    console.log(chalk.gray('─'.repeat(50)));
+    
+    tasks.forEach(task => {
+      if (task.dependencies && task.dependencies.length > 0) {
+        const depNames = task.dependencies.map(depId => {
+          const depTask = tasks.find(t => t.id === depId);
+          return depTask ? depTask.name : depId;
+        });
+        console.log(
+          chalk.white(`${task.name}`) +
+          chalk.gray(' → ') +
+          chalk.yellow(depNames.join(', '))
+        );
+      }
+    });
+    console.log();
+  }
+
+  displayExecutionTimeline(tasks: Task[]): void {
+    console.log(chalk.bold.cyan('\n📅 Execution Timeline:'));
+    console.log(chalk.gray('─'.repeat(50)));
+    
+    let currentTime = 0;
+    const timeline: Array<{ time: number; task: string; duration: number }> = [];
+    
+    tasks.forEach(task => {
+      const duration = task.estimatedDuration || 0;
+      timeline.push({
+        time: currentTime,
+        task: task.name,
+        duration
+      });
+      currentTime += duration;
+    });
+    
+    timeline.forEach(entry => {
+      const timeStr = this.formatDuration(entry.time);
+      const durationStr = this.formatDuration(entry.duration);
+      console.log(
+        chalk.gray(`[${timeStr}]`) +
+        chalk.white(` ${entry.task} `) +
+        chalk.cyan(`(${durationStr})`)
+      );
+    });
+    
+    console.log(chalk.gray('─'.repeat(50)));
+    console.log(chalk.white(`Total: ${this.formatDuration(currentTime)}`));
+    console.log();
+  }
+
+  markTaskCompleted(taskId: string): void {
+    this.completedTasks.add(taskId);
+    this.completeTask(taskId, 'success');
+    this.emit('overall:progress', this.getOverallProgress());
+  }
+
+  displayRealTimeStats(): void {
+    const stats = {
+      completed: this.completedTasks.size,
+      total: this.totalTasks,
+      progress: this.getOverallProgress(),
+      phase: this.currentPhase
+    };
+    
+    const statusLine = [
+      chalk.green(`✓ ${stats.completed}/${stats.total}`),
+      chalk.cyan(`${stats.progress}%`),
+      chalk.magenta(stats.phase)
+    ].join(' | ');
+    
+    process.stdout.write(`\r${statusLine}`);
   }
 }
