@@ -11,6 +11,9 @@
 | **メッセージ構築** | `src/agents/chat.ts` | `ChatAgent.buildMessages()` | 134-178 |
 | **コンテキスト管理** | `src/agents/chat.ts` | `ChatAgent.addContext()` | 208-221 |
 | **対話型UI** | `src/commands/interactive-chat.ts` | `InteractiveChat` | - |
+| **入力バッファリング** | `src/utils/input-buffer.ts` | `InputBuffer` | - |
+| **エラーコンテキスト追跡** | `src/utils/error-context-tracker.ts` | `ErrorContextTracker` | - |
+| **非同期コマンド実行** | `src/execution/async-command-executor.ts` | `AsyncCommandExecutor` | - |
 | **タスクプランニング** | `src/planning/planner.ts` | `TaskPlanner` | - |
 | **タスク管理** | `src/planning/task-manager.ts` | `TaskManager` | - |
 | **タスク実行** | `src/execution/executor.ts` | `TaskExecutor` | - |
@@ -258,7 +261,26 @@ Completion Report             # 完了レポート
 | TaskExecutor | タスクの実行制御 | `executeTask()`, `dryRun()`, `checkSafety()` |
 | ProgressTracker | 進捗の可視化 | `startTask()`, `updateProgress()`, `displaySummary()` |
 
+### 🔧 Issue #17 実装詳細（エンジン問題修正）
+
+#### 実装された機能
+
+| 問題 | 解決策 | 実装ファイル |
+|------|--------|------------|
+| **貼り付け時の分割問題** | 入力バッファリングシステム | `src/utils/input-buffer.ts` |
+| **エラー処理の不適切さ** | エラーコンテキストトラッカー | `src/utils/error-context-tracker.ts` |
+| **ブロッキングコマンド** | 非同期コマンドエグゼキューター | `src/execution/async-command-executor.ts` |
+| **コンテキスト管理** | エラーコンテキスト永続化 | `interactive-chat.ts:saveSessionState()` |
+| **セッション継続性** | 自動保存・復元機能 | `interactive-chat.ts:restoreSession()` |
+
+#### 新規追加コマンド
+
+| コマンド | 説明 |
+|----------|------|
+| `/ps`, `/processes` | バックグラウンドプロセス一覧表示 |
+| `/stop <id>`, `/kill <id>` | バックグラウンドプロセスの停止 |
+
 ---
 この索引は、コードベースの迅速なナビゲーションと理解を支援するために作成されました。
 更新日: 2025-08-21
-バージョン: 0.2.0
+バージョン: 0.3.0
